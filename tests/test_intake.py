@@ -45,6 +45,12 @@ class IntakeTests(unittest.TestCase):
             with self.assertRaises(InputRejected):
                 _extract_zip(out.getvalue(), Path(td))
 
+    def test_archive_size_limit_counts_skipped_binary_entries(self):
+        data = make_zip([("project/logo.png", b"01234567890")])
+        with tempfile.TemporaryDirectory() as td, patch("app.intake.MAX_EXTRACTED_BYTES", 10):
+            with self.assertRaises(InputRejected):
+                _extract_zip(data, Path(td))
+
 
 class DependencyIsolationTests(unittest.TestCase):
     def test_isolated_mode_uses_wheel_only_no_deps_target(self):
