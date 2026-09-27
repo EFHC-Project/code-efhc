@@ -28,3 +28,5 @@ The project-native checker configuration remains authoritative when supplied.
 - no Ruff auto-fix;
 - no dependency installation during a scan;
 - no arbitrary project code execution by the service.
+
+Runtime deployment configuration: Railway Dockerfile builder, healthcheck `/health`.
