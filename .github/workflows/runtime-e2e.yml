@@ -1,0 +1,26 @@
+name: CODE EFHC Runtime E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "tests/e2e_remote.py"
+      - ".github/workflows/runtime-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Run public MCP/Railway E2E
+        env:
+          CODE_EFHC_RUNTIME_URL: https://code-efhc-quality-gate-production.up.railway.app
+        run: python tests/e2e_remote.py
