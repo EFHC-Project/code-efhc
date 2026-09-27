@@ -92,7 +92,7 @@ def _write_relevant(destination: Path, rel: str, data: bytes) -> tuple[int, int]
 
 
 def _extract_zip(data: bytes, destination: Path) -> tuple[int, int, int]:
-    count = total = skipped = 0
+    count = relevant_total = skipped = archive_total = 0
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_ARCHIVE_ENTRIES:
@@ -104,21 +104,25 @@ def _extract_zip(data: bytes, destination: Path) -> tuple[int, int, int]:
                 raise InputRejected(f"archive symlink rejected: {rel}")
             if info.is_dir():
                 continue
-            if info.file_size > MAX_RELEVANT_FILE_BYTES and is_relevant_file(rel):
-                raise InputRejected(f"relevant file too large: {rel}")
-            if total + info.file_size > MAX_EXTRACTED_BYTES:
+            archive_total += info.file_size
+            if archive_total > MAX_EXTRACTED_BYTES:
                 raise InputRejected("archive extracted-size limit exceeded")
+            if is_blocked_path(rel) or not is_relevant_file(rel):
+                skipped += 1
+                continue
+            if info.file_size > MAX_RELEVANT_FILE_BYTES:
+                raise InputRejected(f"relevant file too large: {rel}")
             raw = zf.read(info)
             written, was_skipped = _write_relevant(destination, rel, raw)
             if written:
                 count += 1
-                total += written
+                relevant_total += written
             skipped += was_skipped
-    return count, total, skipped
+    return count, relevant_total, skipped
 
 
 def _extract_tar(data: bytes, destination: Path) -> tuple[int, int, int]:
-    count = total = skipped = 0
+    count = relevant_total = skipped = archive_total = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
         members = tf.getmembers()
         if len(members) > MAX_ARCHIVE_ENTRIES:
@@ -129,22 +133,26 @@ def _extract_tar(data: bytes, destination: Path) -> tuple[int, int, int]:
                 raise InputRejected(f"archive link/device rejected: {rel}")
             if not member.isfile():
                 continue
-            if member.size > MAX_RELEVANT_FILE_BYTES and is_relevant_file(rel):
-                raise InputRejected(f"relevant file too large: {rel}")
-            if total + member.size > MAX_EXTRACTED_BYTES:
+            archive_total += member.size
+            if archive_total > MAX_EXTRACTED_BYTES:
                 raise InputRejected("archive extracted-size limit exceeded")
+            if is_blocked_path(rel) or not is_relevant_file(rel):
+                skipped += 1
+                continue
+            if member.size > MAX_RELEVANT_FILE_BYTES:
+                raise InputRejected(f"relevant file too large: {rel}")
             source = tf.extractfile(member)
             if source is None:
                 continue
             raw = source.read(MAX_RELEVANT_FILE_BYTES + 1)
-            if len(raw) > MAX_RELEVANT_FILE_BYTES and is_relevant_file(rel):
+            if len(raw) > MAX_RELEVANT_FILE_BYTES:
                 raise InputRejected(f"relevant file too large: {rel}")
             written, was_skipped = _write_relevant(destination, rel, raw)
             if written:
                 count += 1
-                total += written
+                relevant_total += written
             skipped += was_skipped
-    return count, total, skipped
+    return count, relevant_total, skipped
 
 
 def _looks_like_zip(data: bytes, name: str | None) -> bool:
