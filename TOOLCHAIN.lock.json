@@ -1,14 +1,18 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "python": "3.13",
+  "runtime": "0.2.0",
   "flake8": "7.4.1",
   "ruff": "0.16.9",
   "mypy": "1.18.2",
   "bandit": "1.8.6",
+  "httpx": "0.28.1",
   "policy": {
     "project_native_config_wins": true,
-    "network_during_scan": false,
+    "moving_github_refs_allowed": false,
+    "network_during_checker_subprocess": false,
     "auto_fix": false,
-    "dependency_install_during_scan": false
+    "automatic_project_dependency_install": false,
+    "isolated_dependency_mode": "explicit-exact-pins-wheel-only-no-deps"
   }
 }
