@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0.0",
+  "python": "3.13",
+  "flake8": "7.4.1",
+  "ruff": "0.16.9",
+  "mypy": "1.18.2",
+  "bandit": "1.8.6",
+  "policy": {
+    "project_native_config_wins": true,
+    "network_during_scan": false,
+    "auto_fix": false,
+    "dependency_install_during_scan": false
+  }
+}
