@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 
 from fastapi.testclient import TestClient
@@ -12,9 +13,9 @@ class ApiTests(unittest.TestCase):
     def test_health(self):
         body = self.c.get("/health").json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["runtime"], "0.2.2")
+        self.assertEqual(body["runtime"], "0.2.3")
 
-    def test_mcp_lists_file_and_github_tools(self):
+    def test_mcp_schema_matches_targeted_contract(self):
         r = self.c.post(
             "/mcp",
             json={
@@ -25,45 +26,74 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200)
         tools = {
-            x["name"]: x
-            for x in r.json()["result"]["tools"]
+            item["name"]: item
+            for item in r.json()["result"]["tools"]
         }
         self.assertIn("run_python_quality_gate", tools)
         self.assertIn("run_python_quality_gate_from_github", tools)
+        self.assertIn("run_python_quality_gate_inline", tools)
+        self.assertIn("compare_python_quality_gate", tools)
         self.assertEqual(
             tools["run_python_quality_gate"]["_meta"]["openai/fileParams"],
             ["files"],
         )
-        file_def = tools["run_python_quality_gate"]["inputSchema"]["$defs"][
-            "OpenAIFile"
-        ]
-        self.assertEqual(
-            file_def["required"],
-            ["download_url", "file_id"],
-        )
-        self.assertEqual(
-            set(file_def["properties"]),
-            {"download_url", "file_id", "mime_type", "file_name"},
-        )
-        inline_schema = tools["run_python_quality_gate_inline"][
-            "inputSchema"
-        ]["properties"]
-        self.assertIn("targets", inline_schema)
 
-    def test_quality_gate_contract(self):
+        inline = tools["run_python_quality_gate_inline"]["inputSchema"]
+        self.assertIn("targets", inline["properties"])
+        self.assertIn("targets", inline["required"])
+        inline_file = inline["properties"]["files"]["items"]
+        self.assertIn("mode", inline_file["properties"])
+
+        compare = tools["compare_python_quality_gate"]["inputSchema"]
+        for key in (
+            "baseline_files",
+            "candidate_files",
+            "baseline_targets",
+            "candidate_targets",
+        ):
+            self.assertIn(key, compare["properties"])
+            self.assertIn(key, compare["required"])
+
+    def test_target_context_config_provenance(self):
+        target = "x = 1\n"
+        config = "[tool.ruff]\nline-length = 88\n"
         r = self.c.post(
             "/v1/quality-gate",
             json={
-                "files": [{"path": "a.py", "content": "x=1\n"}],
+                "files": [
+                    {"path": "pkg/a.py", "content": target},
+                    {
+                        "path": "pkg/context.py",
+                        "content": "VALUE = 1\n",
+                    },
+                    {
+                        "path": "pyproject.toml",
+                        "content": config,
+                    },
+                ],
+                "targets": ["pkg/a.py"],
                 "tools": ["ruff"],
             },
         )
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.json()["results"]), 1)
+        body = r.json()
+        self.assertEqual(body["runtime_version"], "0.2.3")
+        self.assertEqual(body["intake"]["targets"], ["pkg/a.py"])
+        evidence = {
+            item["path"]: item
+            for item in body["intake"]["files"]
+        }
+        self.assertEqual(evidence["pkg/a.py"]["role"], "target")
+        self.assertEqual(evidence["pkg/context.py"]["role"], "context")
         self.assertEqual(
-            r.json()["intake"]["source_kind"],
-            "inline",
+            evidence["pyproject.toml"]["role"],
+            "config",
         )
+        self.assertEqual(
+            evidence["pkg/a.py"]["sha256"],
+            hashlib.sha256(target.encode()).hexdigest(),
+        )
+        self.assertIsNotNone(body["intake"]["config_identity"])
 
     def test_inline_targets_limit_checker_scope(self):
         r = self.c.post(
@@ -82,8 +112,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["status"], "PASS")
         self.assertEqual(
             {
-                x["tool"]: x["status"]
-                for x in body["results"]
+                item["tool"]: item["status"]
+                for item in body["results"]
             },
             {
                 "flake8": "PASS",
@@ -121,10 +151,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["status"], "PASS")
-        self.assertEqual(
-            body["results"][0]["status"],
-            "PASS",
-        )
+        self.assertEqual(body["results"][0]["status"], "PASS")
 
     def test_inline_rejects_target_not_supplied(self):
         r = self.c.post(
@@ -169,6 +196,123 @@ class ApiTests(unittest.TestCase):
             {"pkg/bad.py"},
         )
 
+    def test_ruff_exe001_suppressed_when_mode_unknown(self):
+        source = "#!/usr/bin/env python3\nvalue = 1\n"
+        r = self.c.post(
+            "/v1/quality-gate",
+            json={
+                "files": [{"path": "script.py", "content": source}],
+                "targets": ["script.py"],
+                "tools": ["ruff"],
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "PASS")
+        result = body["results"][0]
+        self.assertGreaterEqual(result["suppressed_findings"], 1)
+        self.assertNotIn(
+            "EXE001",
+            {item["code"] for item in body["findings"]},
+        )
+        self.assertEqual(
+            body["intake"]["files"][0]["mode_provenance"],
+            "unknown",
+        )
+
+    def test_ruff_exe001_retained_when_nonexec_mode_known(self):
+        source = "#!/usr/bin/env python3\nvalue = 1\n"
+        r = self.c.post(
+            "/v1/quality-gate",
+            json={
+                "files": [
+                    {
+                        "path": "script.py",
+                        "content": source,
+                        "mode": 420,
+                    }
+                ],
+                "targets": ["script.py"],
+                "tools": ["ruff"],
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "FAIL_FINDINGS")
+        self.assertIn(
+            "EXE001",
+            {item["code"] for item in body["findings"]},
+        )
+        self.assertEqual(
+            body["intake"]["files"][0]["mode_provenance"],
+            "supplied",
+        )
+
+    def test_compare_is_compact_and_multiset_aware(self):
+        r = self.c.post(
+            "/v1/quality-gate/compare",
+            json={
+                "baseline_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport sys\n",
+                    }
+                ],
+                "candidate_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport json\n",
+                    }
+                ],
+                "baseline_targets": ["a.py"],
+                "candidate_targets": ["a.py"],
+                "tools": ["ruff"],
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "FAIL_INTRODUCED")
+        self.assertEqual(
+            body["summary"],
+            {
+                "baseline": 2,
+                "candidate": 2,
+                "introduced": 1,
+                "resolved": 1,
+                "pre_existing": 1,
+            },
+        )
+        self.assertEqual(body["findings"], [])
+
+    def test_compare_can_return_classified_findings(self):
+        r = self.c.post(
+            "/v1/quality-gate/compare",
+            json={
+                "baseline_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport sys\n",
+                    }
+                ],
+                "candidate_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport json\n",
+                    }
+                ],
+                "baseline_targets": ["a.py"],
+                "candidate_targets": ["a.py"],
+                "tools": ["ruff"],
+                "include_findings": True,
+            },
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(
+            {item["classification"] for item in body["findings"]},
+            {"INTRODUCED", "RESOLVED", "PRE_EXISTING"},
+        )
+
     def test_mcp_rejects_isolated_deps_without_authorization(self):
         r = self.c.post(
             "/mcp",
@@ -182,9 +326,10 @@ class ApiTests(unittest.TestCase):
                         "files": [
                             {
                                 "path": "a.py",
-                                "content": "x=1\n",
+                                "content": "x = 1\n",
                             }
                         ],
+                        "targets": ["a.py"],
                         "tools": ["mypy"],
                         "dependency_mode": "isolated",
                         "dependencies": [
@@ -196,10 +341,7 @@ class ApiTests(unittest.TestCase):
             },
         )
         self.assertIn("error", r.json())
-        self.assertEqual(
-            r.json()["error"]["code"],
-            -32602,
-        )
+        self.assertEqual(r.json()["error"]["code"], -32602)
 
 
 if __name__ == "__main__":
