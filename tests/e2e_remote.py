@@ -76,7 +76,7 @@ def main() -> int:
     cases: list[tuple[str, str]] = []
 
     health = request_json(BASE.rstrip("/") + "/health")
-    assert health == {"status": "ok", "runtime": "0.2.3"}, health  # nosec B101
+    assert health == {"status": "ok", "runtime": "0.2.4"}, health  # nosec B101
     cases.append(("E2E-001", "PASS health/runtime identity"))
 
     listed = request_json(
@@ -226,6 +226,70 @@ def main() -> int:
     assert provenance["results"][0]["version"], provenance  # nosec B101
     cases.append(("E2E-006", "PASS SHA/config/runtime provenance"))
 
+    clean_frontend = tool_result(
+        call_tool(
+            "run_frontend_quality_gate_inline",
+            {
+                "files": [
+                    {
+                        "path": "src/add.ts",
+                        "content": (
+                            "export function add(a: number, b: number): "
+                            "number {\n"
+                            "  return a + b;\n"
+                            "}\n"
+                        ),
+                    }
+                ],
+                "targets": ["src/add.ts"],
+                "tools": ["typescript", "eslint", "node-check"],
+            },
+            6,
+        )
+    )
+    assert clean_frontend["status"] == "PASS", clean_frontend  # nosec B101
+    front_statuses = {
+        item["tool"]: item["status"]
+        for item in clean_frontend["results"]
+    }
+    assert front_statuses["typescript"] == "PASS", front_statuses  # nosec B101
+    assert front_statuses["eslint"] == "PASS", front_statuses  # nosec B101
+    assert (  # nosec B101
+        front_statuses["node-check"] == "NOT_APPLICABLE"
+    ), front_statuses
+    assert clean_frontend["intake"]["targets"] == [  # nosec B101
+        "src/add.ts"
+    ], clean_frontend
+    assert clean_frontend["intake"]["files"][0]["role"] == (  # nosec B101
+        "target"
+    ), clean_frontend
+    cases.append(("E2E-007", "PASS frontend TypeScript/ESLint smoke"))
+
+    bad_frontend = tool_result(
+        call_tool(
+            "run_frontend_quality_gate_inline",
+            {
+                "files": [
+                    {
+                        "path": "src/bad.ts",
+                        "content": 'const value: number = "bad";\n',
+                    }
+                ],
+                "targets": ["src/bad.ts"],
+                "tools": ["typescript"],
+            },
+            7,
+        )
+    )
+    assert (  # nosec B101
+        bad_frontend["status"] == "FAIL_FINDINGS"
+    ), bad_frontend
+    assert any(  # nosec B101
+        item.get("code") == "TS2322"
+        for item in bad_frontend["findings"]
+    ), bad_frontend
+    cases.append(("E2E-008", "PASS frontend TypeScript finding"))
+
     unknown_mode = tool_result(
         one_inline(
             [
@@ -248,7 +312,7 @@ def main() -> int:
         for item in unknown_mode["findings"]
         if item["code"] == "EXE001"
     }, unknown_mode
-    cases.append(("E2E-007", "PASS unknown-mode EXE001 suppression"))
+    cases.append(("E2E-009", "PASS unknown-mode EXE001 suppression"))
 
     known_nonexec = tool_result(
         one_inline(
@@ -271,7 +335,7 @@ def main() -> int:
         item["code"]
         for item in known_nonexec["findings"]
     }, known_nonexec
-    cases.append(("E2E-008", "PASS known-mode EXE001 retained"))
+    cases.append(("E2E-010", "PASS known-mode EXE001 retained"))
 
     negative = tool_result(
         one_inline(
@@ -286,7 +350,7 @@ def main() -> int:
         item["path"]
         for item in negative["findings"]
     } == {"pkg/a.py"}, negative
-    cases.append(("E2E-009", "PASS project-relative finding paths"))
+    cases.append(("E2E-011", "PASS project-relative finding paths"))
 
     compare = tool_result(
         call_tool(
@@ -321,7 +385,7 @@ def main() -> int:
         "pre_existing": 1,
     }, compare
     assert compare["findings"] == [], compare  # nosec B101
-    cases.append(("E2E-010", "PASS compact native regression summary"))
+    cases.append(("E2E-012", "PASS compact native regression summary"))
 
     compare_details = tool_result(
         call_tool(
@@ -352,7 +416,7 @@ def main() -> int:
         item["classification"]
         for item in compare_details["findings"]
     } == {"INTRODUCED", "RESOLVED", "PRE_EXISTING"}, compare_details
-    cases.append(("E2E-011", "PASS classified regression details"))
+    cases.append(("E2E-013", "PASS classified regression details"))
 
     missing_target = one_inline(
         [{"path": "changed.py", "content": "x = 1\n"}],
@@ -361,7 +425,7 @@ def main() -> int:
         targets=["missing.py"],
     )
     expect_error(missing_target)
-    cases.append(("E2E-012", "PASS missing target rejected"))
+    cases.append(("E2E-014", "PASS missing target rejected"))
 
     non_python_target = one_inline(
         [
@@ -373,7 +437,7 @@ def main() -> int:
         targets=["pyproject.toml"],
     )
     expect_error(non_python_target)
-    cases.append(("E2E-013", "PASS config cannot become scanner target"))
+    cases.append(("E2E-015", "PASS config cannot become scanner target"))
 
     mypy_plugin = tool_result(
         one_inline(
@@ -390,7 +454,7 @@ def main() -> int:
         )
     )
     assert mypy_plugin["status"] == "FAIL_CONFIG", mypy_plugin  # nosec B101
-    cases.append(("E2E-014", "PASS executable mypy plugin blocked"))
+    cases.append(("E2E-016", "PASS executable mypy plugin blocked"))
 
     deps = call_tool(
         "run_python_quality_gate_inline",
@@ -405,7 +469,7 @@ def main() -> int:
         14,
     )
     expect_error(deps)
-    cases.append(("E2E-015", "PASS dependency bootstrap authorization gate"))
+    cases.append(("E2E-017", "PASS dependency bootstrap authorization gate"))
 
     moving = call_tool(
         "run_python_quality_gate_from_github",
@@ -419,7 +483,7 @@ def main() -> int:
         15,
     )
     expect_error(moving)
-    cases.append(("E2E-016", "PASS moving GitHub ref rejected"))
+    cases.append(("E2E-018", "PASS moving GitHub ref rejected"))
 
     github = tool_result(
         call_tool(
@@ -438,7 +502,7 @@ def main() -> int:
         github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT
     ), github
     assert github["results"][0]["tool"] == "ruff", github  # nosec B101
-    cases.append(("E2E-017", "PASS exact GitHub commit route"))
+    cases.append(("E2E-019", "PASS exact GitHub commit route"))
 
     for case, result in cases:
         print(f"{case} {result}")
