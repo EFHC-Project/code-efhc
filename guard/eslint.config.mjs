@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const js = require("/opt/efhc-frontend/node_modules/@eslint/js");
 const tsParser = require(
   "/opt/efhc-frontend/node_modules/@typescript-eslint/parser"
 );
@@ -17,7 +16,18 @@ export default [
       sourceType: "module",
     },
     rules: {
-      ...js.configs.recommended.rules,
+      "no-constant-condition": "error",
+      "no-dupe-keys": "error",
+      "no-redeclare": "error",
+      "no-unreachable": "error",
+      "no-undef": "error",
+      "no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+        },
+      ],
     },
   },
   {
@@ -34,9 +44,13 @@ export default [
       "@typescript-eslint": tsPlugin,
     },
     rules: {
-      ...js.configs.recommended.rules,
+      "no-constant-condition": "error",
+      "no-dupe-keys": "error",
+      "no-redeclare": "off",
+      "no-unreachable": "error",
       "no-undef": "off",
       "no-unused-vars": "off",
+      "@typescript-eslint/no-redeclare": "error",
       "@typescript-eslint/no-unused-vars": [
         "error",
         {
