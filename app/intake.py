@@ -130,7 +130,12 @@ def _member_path(name: str) -> str:
     return str(p)
 
 
-def _write_relevant(destination: Path, rel: str, data: bytes) -> tuple[int, int]:
+def _write_relevant(
+    destination: Path,
+    rel: str,
+    data: bytes,
+    mode: int | None = None,
+) -> tuple[int, int]:
     rel = _member_path(rel)
     if is_blocked_path(rel) or not is_relevant_file(rel):
         return 0, 1
@@ -141,20 +146,25 @@ def _write_relevant(destination: Path, rel: str, data: bytes) -> tuple[int, int]
         raise InputRejected(f"duplicate input path: {rel}")
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes(data)
-    os.chmod(dst, 0o444)
+    os.chmod(dst, _readonly_mode(mode))
     return len(data), 0
 
 
-def _extract_zip(data: bytes, destination: Path) -> tuple[int, int, int]:
+def _extract_zip(
+    data: bytes,
+    destination: Path,
+) -> tuple[int, int, int, set[str]]:
     count = relevant_total = skipped = archive_total = 0
+    unknown_mode_paths: set[str] = set()
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_ARCHIVE_ENTRIES:
             raise InputRejected("archive contains too many entries")
         for info in infos:
             rel = _member_path(info.filename)
-            unix_mode = (info.external_attr >> 16) & 0o170000
-            if unix_mode == stat.S_IFLNK:
+            raw_unix_mode = (info.external_attr >> 16) & 0xFFFF
+            file_type = raw_unix_mode & 0o170000
+            if file_type == stat.S_IFLNK:
                 raise InputRejected(f"archive symlink rejected: {rel}")
             if info.is_dir():
                 continue
@@ -167,15 +177,30 @@ def _extract_zip(data: bytes, destination: Path) -> tuple[int, int, int]:
             if info.file_size > MAX_RELEVANT_FILE_BYTES:
                 raise InputRejected(f"relevant file too large: {rel}")
             raw = zf.read(info)
-            written, was_skipped = _write_relevant(destination, rel, raw)
+            mode = (
+                raw_unix_mode & 0o777
+                if info.create_system == 3 and raw_unix_mode
+                else None
+            )
+            written, was_skipped = _write_relevant(
+                destination,
+                rel,
+                raw,
+                mode,
+            )
             if written:
                 count += 1
                 relevant_total += written
+                if mode is None:
+                    unknown_mode_paths.add(rel)
             skipped += was_skipped
-    return count, relevant_total, skipped
+    return count, relevant_total, skipped, unknown_mode_paths
 
 
-def _extract_tar(data: bytes, destination: Path) -> tuple[int, int, int]:
+def _extract_tar(
+    data: bytes,
+    destination: Path,
+) -> tuple[int, int, int, set[str]]:
     count = relevant_total = skipped = archive_total = 0
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
         members = tf.getmembers()
@@ -201,12 +226,17 @@ def _extract_tar(data: bytes, destination: Path) -> tuple[int, int, int]:
             raw = source.read(MAX_RELEVANT_FILE_BYTES + 1)
             if len(raw) > MAX_RELEVANT_FILE_BYTES:
                 raise InputRejected(f"relevant file too large: {rel}")
-            written, was_skipped = _write_relevant(destination, rel, raw)
+            written, was_skipped = _write_relevant(
+                destination,
+                rel,
+                raw,
+                member.mode & 0o777,
+            )
             if written:
                 count += 1
                 relevant_total += written
             skipped += was_skipped
-    return count, relevant_total, skipped
+    return count, relevant_total, skipped, set()
 
 
 ARCHIVE_SUFFIXES = (
@@ -255,10 +285,34 @@ def _has_archive_hint(name: str | None, mime_type: str | None) -> bool:
 
 
 def _project_root(project_dir: Path) -> Path:
-    visible = [p for p in project_dir.iterdir() if p.name not in {".code-efhc-deps"}]
+    visible = [
+        p
+        for p in project_dir.iterdir()
+        if p.name not in {".code-efhc-deps"}
+    ]
     if len(visible) == 1 and visible[0].is_dir():
         return visible[0]
     return project_dir
+
+
+def _rebase_paths(
+    project_dir: Path,
+    root: Path,
+    paths: set[str],
+) -> set[str]:
+    if root == project_dir:
+        return set(paths)
+    prefix = root.relative_to(project_dir).parts
+    rebased: set[str] = set()
+    for raw in paths:
+        parts = PurePosixPath(raw).parts
+        if parts[: len(prefix)] == prefix:
+            rest = parts[len(prefix) :]
+            if rest:
+                rebased.add(PurePosixPath(*rest).as_posix())
+        else:
+            rebased.add(PurePosixPath(raw).as_posix())
+    return rebased
 
 
 def _prepare_dependencies(base: Path, mode: str, dependencies: list[str], authorized: bool) -> tuple[str | None, list[str]]:
@@ -397,6 +451,7 @@ def uploaded_workspace(req: UploadedCheckRequest):
         project.mkdir()
         count = total = skipped = 0
         identities: list[str] = []
+        unknown_mode_paths: set[str] = set()
         for index, file_ref in enumerate(req.files, start=1):
             identity = file_ref.file_id.strip()
             if not identity:
@@ -414,9 +469,11 @@ def uploaded_workspace(req: UploadedCheckRequest):
             identities.append(identity)
             try:
                 if _looks_like_zip(data, name):
-                    c, b, s = _extract_zip(data, project)
+                    c, b, s, unknown = _extract_zip(data, project)
+                    unknown_mode_paths.update(unknown)
                 elif _looks_like_tar(data, name):
-                    c, b, s = _extract_tar(data, project)
+                    c, b, s, unknown = _extract_tar(data, project)
+                    unknown_mode_paths.update(unknown)
                 elif _has_archive_hint(name, file_ref.mime_type):
                     raise InputRejected(
                         "invalid or unsupported archive"
@@ -432,11 +489,14 @@ def uploaded_workspace(req: UploadedCheckRequest):
                         )
                     if not file_ref.file_name:
                         name = f"input_{index}.py"
+                    rel_name = validate_path(name)
                     written, s = _write_relevant(
                         project,
-                        validate_path(name),
+                        rel_name,
                         data,
                     )
+                    if written:
+                        unknown_mode_paths.add(rel_name)
                     c, b = (1 if written else 0), written
             except InputRejected:
                 raise
@@ -455,9 +515,15 @@ def uploaded_workspace(req: UploadedCheckRequest):
             skipped += s
         if count == 0:
             raise InputRejected("no relevant Python/config files found")
-        mypy_path, pins = _prepare_dependencies(base, req.dependency_mode, req.dependencies, req.dependency_authorized)
+        mypy_path, pins = _prepare_dependencies(
+            base,
+            req.dependency_mode,
+            req.dependencies,
+            req.dependency_authorized,
+        )
+        root = _project_root(project)
         yield PreparedWorkspace(
-            root=_project_root(project),
+            root=root,
             intake=IntakeReport(
                 source_kind="uploaded",
                 source_identity=",".join(identities),
@@ -468,6 +534,11 @@ def uploaded_workspace(req: UploadedCheckRequest):
                 dependencies=pins,
             ),
             mypy_path=mypy_path,
+            unknown_mode_paths=_rebase_paths(
+                project,
+                root,
+                unknown_mode_paths,
+            ),
         )
 
 
@@ -480,7 +551,10 @@ def github_workspace(req: GitHubCheckRequest):
         base = Path(td)
         project = base / "project"
         project.mkdir()
-        count, total, skipped = _extract_zip(data, project)
+        count, total, skipped, unknown_mode_paths = _extract_zip(
+            data,
+            project,
+        )
         if count == 0:
             raise InputRejected("no relevant Python/config files found in GitHub revision")
         root = _project_root(project)
@@ -490,7 +564,12 @@ def github_workspace(req: GitHubCheckRequest):
             if not candidate.is_dir():
                 raise InputRejected("GitHub subpath is not a directory in the selected revision")
             root = candidate
-        mypy_path, pins = _prepare_dependencies(base, req.dependency_mode, req.dependencies, req.dependency_authorized)
+        mypy_path, pins = _prepare_dependencies(
+            base,
+            req.dependency_mode,
+            req.dependencies,
+            req.dependency_authorized,
+        )
         yield PreparedWorkspace(
             root=root,
             intake=IntakeReport(
@@ -504,4 +583,9 @@ def github_workspace(req: GitHubCheckRequest):
                 dependencies=pins,
             ),
             mypy_path=mypy_path,
+            unknown_mode_paths=_rebase_paths(
+                project,
+                root,
+                unknown_mode_paths,
+            ),
         )
