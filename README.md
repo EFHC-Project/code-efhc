@@ -6,23 +6,69 @@ Controlled read-only MCP/runtime service for targeted CODE EFHC Python verificat
 
 - `GET /health`
 - `POST /v1/quality-gate`
+- `POST /v1/quality-gate/compare`
+- `POST /v1/quality-gate/github`
 - `POST /mcp`
 
 ## Preferred operating mode
 
-Routine verification is intentionally narrow.
+Routine verification remains intentionally narrow.
 
 ChatGPT / the EFHC CODE Skill selects:
 - changed Python files; and/or
 - a small task-relevant suspicious Python slice;
 - minimal local Python/import context needed by mypy;
-- checker config only when it materially affects the selected targets.
+- project checker config only when it materially affects the selected targets.
 
-The preferred MCP route is `run_python_quality_gate_inline`.
+The preferred single-state route is `run_python_quality_gate_inline`.
 
-The `files` array may contain context files, while `targets` identifies the Python files that Flake8, Ruff, mypy and Bandit must actually scan. This keeps ordinary verification in the kilobyte range and avoids sending full project archives through the checker runtime.
+The `files` array is the ephemeral workspace. It may contain target, context and checker-configuration files. The `targets` array is the scanner scope: only those Python files are passed to Flake8, Ruff, mypy and Bandit. Context and config files remain available for import resolution and project-owned checker configuration without automatically becoming scanner targets.
 
-The uploaded-file/archive and exact-GitHub routes remain available as explicit/manual verification routes, but full-project archive scanning is not the default workflow.
+Optional `mode` preserves original POSIX permission bits. When mode provenance is unavailable, Ruff `EXE001` is suppressed rather than reported as physical-project evidence.
+
+Each inline result includes:
+- SHA-256 for supplied files;
+- role = `target|context|config`;
+- mode + provenance;
+- selected targets;
+- aggregate checker-config identity;
+- runtime identity;
+- checker versions and status.
+
+## Native baseline → candidate comparison
+
+When a real comparable baseline and candidate exist, use `compare_python_quality_gate`.
+
+It runs the same selected checker set on both targeted workspaces and compares finding multiplicities using stable fingerprints. Findings are classified as:
+- `INTRODUCED`;
+- `RESOLVED`;
+- `PRE_EXISTING`.
+
+The default response is regression-oriented and compact:
+
+```text
+baseline N
+candidate N
+introduced N
+resolved N
+pre_existing N
+```
+
+Full classified findings are returned only when `include_findings=true`.
+
+A baseline must be physically comparable and actually available. The runtime does not invent historical state and does not become a second Project Kernel.
+
+## Published MCP contract
+
+The canonical host-contract requirements live in:
+
+`contracts/mcp_quality_gate_contract.json`
+
+Remote E2E loads this contract and fails closed when the live MCP `tools/list` surface no longer matches required tools or fields. This prevents Skill/runtime drift such as documenting `targets` while the published tool schema omits it.
+
+## Fallback routes
+
+The uploaded-file/archive route and exact-GitHub route remain available for explicit/manual verification. Full project archives are not the default Python Quality Gate payload.
 
 ## Checkers
 
@@ -32,18 +78,19 @@ Pinned runtime toolchain:
 - mypy 1.18.2
 - Bandit 1.8.6
 
-The project-native checker configuration remains authoritative when supplied.
+Project-owned checker configuration remains authoritative when supplied as workspace config.
 
-## Security
+## Security boundary
 
 - ephemeral per-request workspace;
-- only bounded text/source/config inputs are accepted;
-- context files are available for type/import resolution but are not scanned when excluded from `targets`;
-- path traversal and secret-like paths are rejected;
-- supplied project files are read-only;
-- no shell command is constructed from user input;
+- bounded text/source/config input;
+- scanner targets explicitly separated from context/config;
+- path traversal and secret-like paths rejected;
+- materialized project files are read-only;
 - no Ruff auto-fix;
+- no arbitrary project-script execution;
 - no automatic dependency installation;
-- no arbitrary project code execution by the service.
+- isolated dependency bootstrap remains explicit-authorization + exact-pin only;
+- runtime verification is not remote CI.
 
 Runtime deployment configuration: Railway Dockerfile builder, healthcheck `/health`.
