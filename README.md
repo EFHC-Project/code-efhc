@@ -8,6 +8,7 @@ Controlled read-only MCP/runtime service for targeted CODE EFHC Python verificat
 - `POST /v1/quality-gate`
 - `POST /v1/quality-gate/compare`
 - `POST /v1/quality-gate/github`
+- `POST /v1/frontend-quality-gate`
 - `POST /mcp`
 
 ## Preferred operating mode
@@ -33,7 +34,9 @@ Each inline result includes:
 - selected targets;
 - aggregate checker-config identity;
 - runtime identity;
-- checker versions and status.
+- checker versions and status;
+- normalized `exit_code` plus `raw_exit_code` when suppression/normalization
+  changes the raw subprocess result.
 
 ## Native baseline → candidate comparison
 
@@ -57,6 +60,25 @@ pre_existing N
 Full classified findings are returned only when `include_findings=true`.
 
 A baseline must be physically comparable and actually available. The runtime does not invent historical state and does not become a second Project Kernel.
+
+## Targeted frontend static verification
+
+Use `run_frontend_quality_gate_inline` for small selected frontend
+targets plus only minimal source/type/config context.
+
+The scanner split is deliberate:
+
+- `.ts` / `.tsx` → TypeScript compiler;
+- `.js` / `.jsx` / `.mjs` / `.cjs` → trusted CODE EFHC ESLint;
+- `.js` / `.mjs` / `.cjs` → Node `--check` syntax verification.
+
+Project ESLint plugins/configuration and arbitrary project scripts are not
+executed by this runtime. Project-owned build, unit/E2E/browser tests and
+framework-specific checks remain project-native/exact-head CI evidence.
+
+The frontend result carries the same target/context/config evidence pattern:
+selected targets, per-file SHA-256/role, config identity, tool versions, and
+normalized plus raw exit codes.
 
 ## Published MCP contract
 
