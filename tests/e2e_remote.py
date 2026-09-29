@@ -187,7 +187,15 @@ def main() -> int:
     codes = {(f["tool"], f.get("code")) for f in negative["findings"]}
     assert ("flake8", "F401") in codes, negative
     assert ("ruff", "F401") in codes, negative
-    cases.append(("E2E-008", "PASS targeted negative F401"))
+    assert {
+        f["path"]
+        for f in negative["findings"]
+        if f.get("code") == "F401"
+    } == {"a.py"}, negative
+    cases.append((
+        "E2E-008",
+        "PASS targeted F401 + project-relative evidence paths",
+    ))
 
     mypy_plugin = tool_result(
         one_inline(
