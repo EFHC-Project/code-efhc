@@ -3,7 +3,7 @@ name: CODE EFHC Runtime E2E
 on:
   workflow_dispatch:
   push:
-    branches: [main, "feat/v1.1.4-host-contract-frontend-gate"]
+    branches: [main]
     paths:
       - "app/**"
       - "guard/**"
