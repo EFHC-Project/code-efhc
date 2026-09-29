@@ -58,7 +58,8 @@ class IntakeTests(unittest.TestCase):
             root = Path(td)
             _, _, _, unknown = _extract_zip(out.getvalue(), root)
             self.assertEqual(unknown, set())
-            self.assertEqual((root / "script.py").stat().st_mode & 0o777, 0o555)
+            mode = (root / "script.py").stat().st_mode & 0o777
+            self.assertEqual(mode, 0o555)
 
     def test_marks_zip_mode_unknown_when_provenance_missing(self):
         out = io.BytesIO()
@@ -70,7 +71,8 @@ class IntakeTests(unittest.TestCase):
             root = Path(td)
             _, _, _, unknown = _extract_zip(out.getvalue(), root)
             self.assertEqual(unknown, {"script.py"})
-            self.assertEqual((root / "script.py").stat().st_mode & 0o777, 0o444)
+            mode = (root / "script.py").stat().st_mode & 0o777
+            self.assertEqual(mode, 0o444)
 
     def test_rejects_traversal(self):
         data = make_zip([("../evil.py", b"x=1")])
