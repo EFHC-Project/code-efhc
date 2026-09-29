@@ -536,7 +536,7 @@ def main() -> int:
     ), bad_frontend
     cases.append(
         (
-            "E2E-010",
+            "E2E-011",
             "PASS frontend TypeScript negative case",
         )
     )
@@ -555,7 +555,7 @@ def main() -> int:
     expect_error(missing_target)
     cases.append(
         (
-            "E2E-011",
+            "E2E-012",
             "PASS missing Python target rejected",
         )
     )
@@ -578,7 +578,7 @@ def main() -> int:
     expect_error(non_python_target)
     cases.append(
         (
-            "E2E-012",
+            "E2E-013",
             "PASS config cannot become Python scanner target",
         )
     )
@@ -605,7 +605,7 @@ def main() -> int:
     expect_error(deps)
     cases.append(
         (
-            "E2E-013",
+            "E2E-014",
             "PASS dependency bootstrap authorization gate",
         )
     )
@@ -624,7 +624,7 @@ def main() -> int:
     expect_error(moving)
     cases.append(
         (
-            "E2E-014",
+            "E2E-015",
             "PASS moving GitHub ref rejected",
         )
     )
@@ -649,7 +649,7 @@ def main() -> int:
     assert github["intake"]["files"], github  # nosec B101
     cases.append(
         (
-            "E2E-015",
+            "E2E-016",
             "PASS exact GitHub target/provenance route",
         )
     )
