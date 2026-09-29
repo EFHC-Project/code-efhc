@@ -7,6 +7,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
 
+from .frontend import execute_frontend_gate
 from .intake import (
     PreparedWorkspace,
     github_workspace,
@@ -18,6 +19,8 @@ from .models import (
     CompareCheckRequest,
     CompareQualityGateResponse,
     Finding,
+    FrontendCheckRequest,
+    FrontendQualityGateResponse,
     GateEvidence,
     GitHubCheckRequest,
     QualityGateResponse,
@@ -72,6 +75,16 @@ TOOLS_SCHEMA = {
     "minItems": 1,
     "maxItems": 4,
 }
+FRONTEND_TOOLS_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "string",
+        "enum": ["typescript", "eslint", "node-check"],
+    },
+    "minItems": 1,
+    "maxItems": 3,
+}
+
 DEPENDENCY_PROPERTIES = {
     "dependency_mode": {
         "type": "string",
@@ -101,7 +114,11 @@ GUARDIAN_INSTRUCTIONS = (
     "When a real comparable baseline and candidate are available, "
     "compare_python_quality_gate provides native INTRODUCED/RESOLVED/"
     "PRE_EXISTING classification and returns a compact summary by default. "
-    "Do not invent a baseline. Do not send a full project archive by "
+    "For TypeScript/JavaScript use run_frontend_quality_gate_inline with "
+    "explicit targets and minimal context; it performs trusted static "
+    "TypeScript, ESLint and Node syntax verification without running project "
+    "test/build scripts. Do not invent a baseline. Do not send a full project "
+    "archive by "
     "default. Never weaken checks, run auto-fix, or install dependencies "
     "without explicit authorization for exact pins. Runtime checks are "
     "not remote CI."
@@ -221,6 +238,33 @@ def _tool_descriptors():
             },
         },
         {
+            "name": "run_frontend_quality_gate_inline",
+            "title": "Check selected TypeScript and JavaScript targets",
+            "description": (
+                "Targeted read-only static frontend verification. files "
+                "contains selected targets plus minimal source/type/config "
+                "context. targets is the scanner scope. Runs trusted "
+                "TypeScript, ESLint and Node syntax checks. Project test/build "
+                "scripts are intentionally not executed by this static gate."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "files": _inline_files_property(),
+                    "targets": _targets_property(),
+                    "tools": FRONTEND_TOOLS_SCHEMA,
+                },
+                "required": ["files", "targets"],
+                "additionalProperties": False,
+            },
+            "annotations": {
+                "readOnlyHint": True,
+                "destructiveHint": False,
+                "openWorldHint": False,
+                "idempotentHint": True,
+            },
+        },
+        {
             "name": "compare_python_quality_gate",
             "title": "Compare baseline and candidate Python quality",
             "description": (
@@ -304,6 +348,40 @@ def _execute(
     else:
         status = "PARTIAL"
     return QualityGateResponse(
+        status=status,
+        runtime_version=RUNTIME_VERSION,
+        runtime_commit=_runtime_commit(),
+        results=results,
+        findings=findings,
+        intake=prepared.intake,
+    )
+
+
+def _execute_frontend(
+    req: FrontendCheckRequest,
+) -> FrontendQualityGateResponse:
+    prepared, results = execute_frontend_gate(req)
+    findings = [
+        finding
+        for result in results
+        for finding in result.findings
+    ]
+    statuses = {result.status for result in results}
+    status: Literal[
+        "PASS",
+        "FAIL_FINDINGS",
+        "FAIL_CONFIG",
+        "PARTIAL",
+    ]
+    if "CONFIG_ERROR" in statuses:
+        status = "FAIL_CONFIG"
+    elif findings:
+        status = "FAIL_FINDINGS"
+    elif statuses <= {"PASS", "NOT_APPLICABLE"}:
+        status = "PASS"
+    else:
+        status = "PARTIAL"
+    return FrontendQualityGateResponse(
         status=status,
         runtime_version=RUNTIME_VERSION,
         runtime_commit=_runtime_commit(),
@@ -476,6 +554,17 @@ def quality_gate(req: CheckRequest):
 
 
 @app.post(
+    "/v1/frontend-quality-gate",
+    response_model=FrontendQualityGateResponse,
+)
+def frontend_quality_gate(req: FrontendCheckRequest):
+    try:
+        return _execute_frontend(req)
+    except InputRejected as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post(
     "/v1/quality-gate/compare",
     response_model=CompareQualityGateResponse,
 )
@@ -576,6 +665,12 @@ async def mcp(request: Request):
                     rid,
                     _execute(prepared, inline_req.tools),
                 )
+        if name == "run_frontend_quality_gate_inline":
+            frontend_req = FrontendCheckRequest.model_validate(args)
+            return _mcp_success(
+                rid,
+                _execute_frontend(frontend_req),
+            )
         if name == "compare_python_quality_gate":
             compare_req = CompareCheckRequest.model_validate(args)
             return _mcp_success(rid, _compare(compare_req))
