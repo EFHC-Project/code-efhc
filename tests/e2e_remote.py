@@ -7,6 +7,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 BASE = os.environ.get(
     "CODE_EFHC_RUNTIME_URL",
@@ -86,34 +87,33 @@ def main() -> int:
         item["name"]: item
         for item in listed["result"]["tools"]
     }
-    required = {
-        "run_python_quality_gate",
-        "run_python_quality_gate_from_github",
-        "run_python_quality_gate_inline",
-        "compare_python_quality_gate",
-    }
+    contract = json.loads(
+        Path("contracts/mcp_quality_gate_contract.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    required = set(contract["required_tools"])
     assert required <= set(tool_map), set(tool_map)  # nosec B101
-    inline_schema = tool_map["run_python_quality_gate_inline"]["inputSchema"]
-    assert (  # nosec B101
-        "targets" in inline_schema["properties"]
-    ), inline_schema
-    assert "targets" in inline_schema["required"], inline_schema  # nosec B101
-    assert (  # nosec B101
-        "mode"
-        in inline_schema["properties"]["files"]["items"]["properties"]
-    ), inline_schema
-    compare_schema = tool_map["compare_python_quality_gate"]["inputSchema"]
-    for key in (
-        "baseline_files",
-        "candidate_files",
-        "baseline_targets",
-        "candidate_targets",
-    ):
-        assert (  # nosec B101
-            key in compare_schema["properties"]
-        ), compare_schema
-        assert key in compare_schema["required"], compare_schema  # nosec B101
-    cases.append(("E2E-002", "PASS published MCP schema contract"))
+    for tool_name, expected in contract["required_tools"].items():
+        schema = tool_map[tool_name]["inputSchema"]
+        properties = schema["properties"]
+        required_props = set(schema.get("required", []))
+        for key in expected.get("required_properties", []):
+            assert key in properties, schema  # nosec B101
+            assert key in required_props, schema  # nosec B101
+        file_key = (
+            "files"
+            if "files" in properties
+            else "baseline_files"
+        )
+        file_props = properties[file_key]["items"]["properties"]
+        for key in expected.get("required_file_properties", []):
+            assert key in file_props, schema  # nosec B101
+        for key in expected.get("optional_file_properties", []):
+            assert key in file_props, schema  # nosec B101
+        for key in expected.get("optional_properties", []):
+            assert key in properties, schema  # nosec B101
+    cases.append(("E2E-002", "PASS canonical MCP schema contract"))
 
     clean = tool_result(
         one_inline(
