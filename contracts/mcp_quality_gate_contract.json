@@ -1,0 +1,21 @@
+{
+  "revision": "v1.1.3",
+  "required_tools": {
+    "run_python_quality_gate_inline": {
+      "required_properties": ["files", "targets"],
+      "required_file_properties": ["path", "content"],
+      "optional_file_properties": ["mode"]
+    },
+    "compare_python_quality_gate": {
+      "required_properties": [
+        "baseline_files",
+        "candidate_files",
+        "baseline_targets",
+        "candidate_targets"
+      ],
+      "required_file_properties": ["path", "content"],
+      "optional_file_properties": ["mode"],
+      "optional_properties": ["include_findings"]
+    }
+  }
+}
