@@ -10,6 +10,8 @@ DependencyMode = Literal["none", "isolated"]
 
 def _default_tools() -> list[ToolName]:
     return ["flake8", "ruff", "mypy", "bandit"]
+
+
 FileRole = Literal["target", "context", "config"]
 ModeProvenance = Literal["supplied", "archive", "unknown"]
 RegressionClass = Literal["INTRODUCED", "RESOLVED", "PRE_EXISTING"]
