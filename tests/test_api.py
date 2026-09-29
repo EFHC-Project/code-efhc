@@ -261,7 +261,7 @@ class ApiTests(unittest.TestCase):
                 "candidate_files": [
                     {
                         "path": "a.py",
-                        "content": "import os\nimport json\n",
+                        "content": "import os\nimport pathlib\n",
                     }
                 ],
                 "baseline_targets": ["a.py"],
@@ -297,7 +297,7 @@ class ApiTests(unittest.TestCase):
                 "candidate_files": [
                     {
                         "path": "a.py",
-                        "content": "import os\nimport json\n",
+                        "content": "import os\nimport pathlib\n",
                     }
                 ],
                 "baseline_targets": ["a.py"],
