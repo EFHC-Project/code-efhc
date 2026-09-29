@@ -244,8 +244,8 @@ def _tool_descriptors():
                 "Targeted read-only static frontend verification. files "
                 "contains selected targets plus minimal source/type/config "
                 "context. targets is the scanner scope. Runs trusted "
-                "TypeScript, ESLint and Node syntax checks. Project test/build "
-                "scripts are intentionally not executed by this static gate."
+                "TypeScript, ESLint and Node syntax checks. Project "
+                "test/build scripts are not executed by this static gate."
             ),
             "inputSchema": {
                 "type": "object",
