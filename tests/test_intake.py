@@ -40,11 +40,37 @@ class IntakeTests(unittest.TestCase):
         data = make_zip([("project/a.py", b"x=1\n"), ("project/logo.png", b"PNG")])
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            count, total, skipped = _extract_zip(data, root)
+            count, total, skipped, unknown = _extract_zip(data, root)
             self.assertEqual(count, 1)
             self.assertEqual(total, 4)
             self.assertEqual(skipped, 1)
+            self.assertIsInstance(unknown, set)
             self.assertEqual(_project_root(root).name, "project")
+
+    def test_preserves_known_zip_executable_mode(self):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as zf:
+            info = zipfile.ZipInfo("script.py")
+            info.create_system = 3
+            info.external_attr = (stat.S_IFREG | 0o755) << 16
+            zf.writestr(info, "#!/usr/bin/env python3\n")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _, _, _, unknown = _extract_zip(out.getvalue(), root)
+            self.assertEqual(unknown, set())
+            self.assertEqual((root / "script.py").stat().st_mode & 0o777, 0o555)
+
+    def test_marks_zip_mode_unknown_when_provenance_missing(self):
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as zf:
+            info = zipfile.ZipInfo("script.py")
+            info.create_system = 0
+            zf.writestr(info, "#!/usr/bin/env python3\n")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _, _, _, unknown = _extract_zip(out.getvalue(), root)
+            self.assertEqual(unknown, {"script.py"})
+            self.assertEqual((root / "script.py").stat().st_mode & 0o777, 0o444)
 
     def test_rejects_traversal(self):
         data = make_zip([("../evil.py", b"x=1")])
@@ -113,6 +139,7 @@ class UploadedWorkspaceTests(unittest.TestCase):
             with uploaded_workspace(req) as prepared:
                 self.assertEqual(prepared.intake.file_count, 1)
                 self.assertTrue((prepared.root / "a.py").is_file())
+                self.assertEqual(prepared.unknown_mode_paths, set())
 
     def test_accepts_multiple_uploaded_plain_files(self):
         req = UploadedCheckRequest(
@@ -139,6 +166,10 @@ class UploadedWorkspaceTests(unittest.TestCase):
                 self.assertEqual(
                     prepared.intake.source_identity,
                     "opaque-a,opaque-b",
+                )
+                self.assertEqual(
+                    prepared.unknown_mode_paths,
+                    {"a.py", "b.py"},
                 )
 
     def test_rejects_malformed_archive_hint(self):
