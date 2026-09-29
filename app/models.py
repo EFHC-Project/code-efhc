@@ -29,6 +29,7 @@ class GateOptions(BaseModel):
 
 class CheckRequest(GateOptions):
     files: list[FileInput] = Field(min_length=1, max_length=200)
+    targets: list[str] = Field(default_factory=list, max_length=200)
     target_python: str | None = None
 
 
