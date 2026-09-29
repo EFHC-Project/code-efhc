@@ -301,7 +301,7 @@ def main() -> int:
                 "candidate_files": [
                     {
                         "path": "a.py",
-                        "content": "import os\nimport json\n",
+                        "content": "import os\nimport pathlib\n",
                     }
                 ],
                 "baseline_targets": ["a.py"],
@@ -336,7 +336,7 @@ def main() -> int:
                 "candidate_files": [
                     {
                         "path": "a.py",
-                        "content": "import os\nimport json\n",
+                        "content": "import os\nimport pathlib\n",
                     }
                 ],
                 "baseline_targets": ["a.py"],
