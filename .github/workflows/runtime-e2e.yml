@@ -29,7 +29,7 @@ jobs:
       - name: Install pinned runtime dependencies
         run: python -m pip install --disable-pip-version-check -r requirements.txt
       - name: Run local runtime contract tests
-        run: python -m unittest tests.test_api tests.test_intake
+        run: python -m unittest tests.test_api tests.test_intake tests.test_frontend
       - name: Run public MCP/Railway E2E
         env:
           CODE_EFHC_RUNTIME_URL: https://code-efhc-quality-gate-production.up.railway.app
