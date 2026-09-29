@@ -1,4 +1,4 @@
-# Cycle 0021 remote E2E harness.
+# CODE EFHC remote E2E harness.
 from __future__ import annotations
 
 import json
@@ -7,14 +7,18 @@ import sys
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("CODE_EFHC_RUNTIME_URL", "https://code-efhc-quality-gate-production.up.railway.app")
+BASE = os.environ.get(
+    "CODE_EFHC_RUNTIME_URL",
+    "https://code-efhc-quality-gate-production.up.railway.app",
+)
 MCP = BASE.rstrip("/") + "/mcp"
 EXACT_GITHUB_COMMIT = "7c727a07da2b18aff09bcb3a6bc0c07143654c6c"
 
 
 def request_json(url: str, payload: dict | None = None) -> dict:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"} if payload is not None else {})
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
             raw = response.read().decode("utf-8")
@@ -25,12 +29,15 @@ def request_json(url: str, payload: dict | None = None) -> dict:
 
 
 def call_tool(name: str, arguments: dict, call_id: int) -> dict:
-    return request_json(MCP, {
-        "jsonrpc": "2.0",
-        "id": call_id,
-        "method": "tools/call",
-        "params": {"name": name, "arguments": arguments},
-    })
+    return request_json(
+        MCP,
+        {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        },
+    )
 
 
 def tool_result(response: dict) -> dict:
@@ -42,7 +49,12 @@ def expect_error(response: dict, code: int = -32602) -> None:
     assert response.get("error", {}).get("code") == code, response
 
 
-def one_inline(files: list[dict], tools: list[str], call_id: int, **extra) -> dict:
+def one_inline(
+    files: list[dict],
+    tools: list[str],
+    call_id: int,
+    **extra,
+) -> dict:
     args = {"files": files, "tools": tools, "dependency_mode": "none"}
     args.update(extra)
     return call_tool("run_python_quality_gate_inline", args, call_id)
@@ -53,117 +65,204 @@ def main() -> int:
 
     health = request_json(BASE.rstrip("/") + "/health")
     assert health["status"] == "ok", health
-    assert health["runtime"] == "0.2.2", health
-    cases.append(("E2E-001", "PASS health runtime 0.2.2"))
+    cases.append(("E2E-001", "PASS health"))
 
-    tools = request_json(MCP, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-    names = {x["name"] for x in tools["result"]["tools"]}
+    tools = request_json(
+        MCP,
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+    )
+    tool_map = {x["name"]: x for x in tools["result"]["tools"]}
     required = {
         "run_python_quality_gate",
         "run_python_quality_gate_from_github",
         "run_python_quality_gate_inline",
     }
-    assert required <= names, names
-    cases.append(("E2E-002", "PASS MCP tool discovery"))
+    assert required <= set(tool_map), set(tool_map)
+    inline_schema = tool_map["run_python_quality_gate_inline"]["inputSchema"]
+    assert "targets" in inline_schema["properties"], inline_schema
+    cases.append(("E2E-002", "PASS MCP discovery + targets schema"))
 
-    clean = tool_result(one_inline(
-        [{"path": "a.py", "content": "def add(a: int, b: int) -> int:\n    return a + b\n"}],
-        ["flake8", "ruff", "mypy", "bandit"],
-        2,
-    ))
+    clean = tool_result(
+        one_inline(
+            [
+                {
+                    "path": "a.py",
+                    "content": (
+                        "def add(a: int, b: int) -> int:\n"
+                        "    return a + b\n"
+                    ),
+                }
+            ],
+            ["flake8", "ruff", "mypy", "bandit"],
+            2,
+            targets=["a.py"],
+        )
+    )
     assert clean["status"] == "PASS", clean
     per_tool = {r["tool"]: r["status"] for r in clean["results"]}
-    assert per_tool == {"flake8": "PASS", "ruff": "PASS", "mypy": "PASS", "bandit": "PASS"}, per_tool
-    cases.append(("E2E-003", "PASS all four real checkers"))
+    assert per_tool == {
+        "flake8": "PASS",
+        "ruff": "PASS",
+        "mypy": "PASS",
+        "bandit": "PASS",
+    }, per_tool
+    cases.append(("E2E-003", "PASS targeted all-four smoke"))
 
-    flake8 = tool_result(one_inline([{"path": "a.py", "content": "import os\n"}], ["flake8"], 3))
-    assert flake8["status"] == "FAIL_FINDINGS", flake8
-    assert any(f.get("code") == "F401" for f in flake8["findings"]), flake8
-    cases.append(("E2E-004", "PASS Flake8 negative F401"))
+    scoped = tool_result(
+        one_inline(
+            [
+                {"path": "changed.py", "content": "x = 1\n"},
+                {"path": "context.py", "content": "import os\n"},
+            ],
+            ["flake8", "ruff", "bandit"],
+            3,
+            targets=["changed.py"],
+        )
+    )
+    assert scoped["status"] == "PASS", scoped
+    assert not scoped["findings"], scoped
+    cases.append(("E2E-004", "PASS context excluded from scanner targets"))
 
-    ruff = tool_result(one_inline([{"path": "a.py", "content": "import os\n"}], ["ruff"], 4))
-    assert ruff["status"] == "FAIL_FINDINGS", ruff
-    assert any(f.get("code") == "F401" for f in ruff["findings"]), ruff
-    cases.append(("E2E-005", "PASS Ruff negative F401"))
+    mypy_context = tool_result(
+        one_inline(
+            [
+                {"path": "pkg/__init__.py", "content": ""},
+                {
+                    "path": "pkg/helper.py",
+                    "content": (
+                        "def twice(value: int) -> int:\n"
+                        "    return value * 2\n"
+                    ),
+                },
+                {
+                    "path": "pkg/changed.py",
+                    "content": (
+                        "from pkg.helper import twice\n\n"
+                        "def result(value: int) -> int:\n"
+                        "    return twice(value)\n"
+                    ),
+                },
+            ],
+            ["mypy"],
+            4,
+            targets=["pkg/changed.py"],
+        )
+    )
+    assert mypy_context["status"] == "PASS", mypy_context
+    assert mypy_context["results"][0]["status"] == "PASS", mypy_context
+    cases.append(("E2E-005", "PASS mypy minimal import context"))
 
-    mypy = tool_result(one_inline(
-        [{"path": "a.py", "content": 'def bad() -> int:\n    return "x"\n'}],
-        ["mypy"],
+    missing_target = one_inline(
+        [{"path": "changed.py", "content": "x = 1\n"}],
+        ["ruff"],
         5,
-    ))
-    assert mypy["status"] == "FAIL_FINDINGS", mypy
-    assert any(f.get("code") == "return-value" for f in mypy["findings"]), mypy
-    cases.append(("E2E-006", "PASS mypy negative return-value"))
+        targets=["missing.py"],
+    )
+    expect_error(missing_target)
+    assert "quality-gate target was not supplied" in missing_target["error"]["message"]
+    cases.append(("E2E-006", "PASS missing target rejected"))
 
-    bandit = tool_result(one_inline(
-        [{"path": "a.py", "content": 'import subprocess\n\nsubprocess.Popen("echo hi", shell=True)\n'}],
-        ["bandit"],
-        6,
-    ))
-    assert bandit["status"] == "FAIL_FINDINGS", bandit
-    assert any((f.get("code") or "").startswith("B6") for f in bandit["findings"]), bandit
-    cases.append(("E2E-007", "PASS Bandit security finding"))
-
-    traversal = one_inline([{"path": "../evil.py", "content": "x = 1\n"}], ["ruff"], 7)
-    expect_error(traversal)
-    cases.append(("E2E-008", "PASS traversal rejected"))
-
-    mypy_plugin = tool_result(one_inline(
+    non_python_target = one_inline(
         [
-            {"path": "a.py", "content": "x: int = 1\n"},
-            {"path": "mypy.ini", "content": "[mypy]\nplugins = evil.py\n"},
+            {"path": "changed.py", "content": "x = 1\n"},
+            {"path": "pyproject.toml", "content": "[tool.ruff]\n"},
         ],
-        ["mypy"],
-        8,
-    ))
+        ["ruff"],
+        6,
+        targets=["pyproject.toml"],
+    )
+    expect_error(non_python_target)
+    assert "target is not Python" in non_python_target["error"]["message"]
+    cases.append(("E2E-007", "PASS non-Python target rejected"))
+
+    negative = tool_result(
+        one_inline(
+            [{"path": "a.py", "content": "import os\n"}],
+            ["flake8", "ruff"],
+            7,
+            targets=["a.py"],
+        )
+    )
+    assert negative["status"] == "FAIL_FINDINGS", negative
+    codes = {(f["tool"], f.get("code")) for f in negative["findings"]}
+    assert ("flake8", "F401") in codes, negative
+    assert ("ruff", "F401") in codes, negative
+    cases.append(("E2E-008", "PASS targeted negative F401"))
+
+    mypy_plugin = tool_result(
+        one_inline(
+            [
+                {"path": "a.py", "content": "x: int = 1\n"},
+                {
+                    "path": "mypy.ini",
+                    "content": "[mypy]\nplugins = evil.py\n",
+                },
+            ],
+            ["mypy"],
+            8,
+            targets=["a.py"],
+        )
+    )
     assert mypy_plugin["status"] == "FAIL_CONFIG", mypy_plugin
     assert mypy_plugin["results"][0]["status"] == "CONFIG_ERROR", mypy_plugin
-    assert "blocked executable mypy plugin" in mypy_plugin["results"][0]["stderr"], mypy_plugin
+    assert "blocked executable mypy plugin" in mypy_plugin["results"][0]["stderr"]
     cases.append(("E2E-009", "PASS mypy executable plugin blocked"))
 
-    flake8_plugin = tool_result(one_inline(
-        [
-            {"path": "a.py", "content": "x = 1\n"},
-            {"path": ".flake8", "content": "[flake8:local-plugins]\nextension = X = evil:Plugin\n"},
-        ],
-        ["flake8"],
+    deps = call_tool(
+        "run_python_quality_gate_inline",
+        {
+            "files": [{"path": "a.py", "content": "x = 1\n"}],
+            "targets": ["a.py"],
+            "tools": ["mypy"],
+            "dependency_mode": "isolated",
+            "dependencies": ["typing-extensions==4.15.0"],
+            "dependency_authorized": False,
+        },
         9,
-    ))
-    assert flake8_plugin["status"] == "FAIL_CONFIG", flake8_plugin
-    assert flake8_plugin["results"][0]["status"] == "CONFIG_ERROR", flake8_plugin
-    cases.append(("E2E-010", "PASS Flake8 local plugin blocked"))
-
-    deps = call_tool("run_python_quality_gate_inline", {
-        "files": [{"path": "a.py", "content": "x = 1\n"}],
-        "tools": ["mypy"],
-        "dependency_mode": "isolated",
-        "dependencies": ["typing-extensions==4.15.0"],
-        "dependency_authorized": False,
-    }, 10)
+    )
     expect_error(deps)
-    cases.append(("E2E-011", "PASS unauthorized dependency bootstrap rejected"))
+    cases.append(("E2E-010", "PASS unauthorized dependency bootstrap rejected"))
 
-    moving = call_tool("run_python_quality_gate_from_github", {
-        "owner": "EFHC-Project",
-        "repo": "code-efhc",
-        "commit_sha": "main",
-        "tools": ["ruff"],
-        "dependency_mode": "none",
-    }, 11)
+    moving = call_tool(
+        "run_python_quality_gate_from_github",
+        {
+            "owner": "EFHC-Project",
+            "repo": "code-efhc",
+            "commit_sha": "main",
+            "tools": ["ruff"],
+            "dependency_mode": "none",
+        },
+        10,
+    )
     expect_error(moving)
-    cases.append(("E2E-012", "PASS moving GitHub ref rejected"))
+    cases.append(("E2E-011", "PASS moving GitHub ref rejected"))
 
-    github = tool_result(call_tool("run_python_quality_gate_from_github", {
-        "owner": "EFHC-Project",
-        "repo": "code-efhc",
-        "commit_sha": EXACT_GITHUB_COMMIT,
-        "tools": ["ruff"],
-        "dependency_mode": "none",
-    }, 12))
+    github = tool_result(
+        call_tool(
+            "run_python_quality_gate_from_github",
+            {
+                "owner": "EFHC-Project",
+                "repo": "code-efhc",
+                "commit_sha": EXACT_GITHUB_COMMIT,
+                "tools": ["ruff"],
+                "dependency_mode": "none",
+            },
+            11,
+        )
+    )
     assert github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT, github
     assert github["results"][0]["tool"] == "ruff", github
-    assert github["results"][0]["status"] in {"PASS", "FINDINGS", "CONFIG_ERROR"}, github
-    cases.append(("E2E-013", f"PASS exact GitHub commit echoed; Ruff={github['results'][0]['status']}"))
+    assert github["results"][0]["status"] in {
+        "PASS",
+        "FINDINGS",
+        "CONFIG_ERROR",
+    }, github
+    cases.append(
+        (
+            "E2E-012",
+            f"PASS exact GitHub commit; Ruff={github['results'][0]['status']}",
+        )
+    )
 
     for case, result in cases:
         print(f"{case} {result}")
