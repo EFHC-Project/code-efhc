@@ -30,7 +30,7 @@ from .models import (
 from .runners import RUNNERS
 from .security import InputRejected
 
-RUNTIME_VERSION = "0.2.3"
+RUNTIME_VERSION = "0.2.4"
 
 app = FastAPI(title="CODE EFHC Runtime", version=RUNTIME_VERSION)
 
@@ -121,6 +121,7 @@ def _targets_property():
     return {
         "type": "array",
         "items": {"type": "string"},
+        "minItems": 1,
         "maxItems": 200,
     }
 
@@ -323,6 +324,7 @@ def _compact_gate(out: QualityGateResponse) -> GateEvidence:
                 tool=result.tool,
                 status=result.status,
                 exit_code=result.exit_code,
+                raw_exit_code=result.raw_exit_code,
                 version=result.version,
                 finding_count=len(result.findings),
                 suppressed_findings=result.suppressed_findings,
