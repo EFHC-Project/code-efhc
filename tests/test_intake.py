@@ -40,11 +40,11 @@ class IntakeTests(unittest.TestCase):
         data = make_zip([("project/a.py", b"x=1\n"), ("project/logo.png", b"PNG")])
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            count, total, skipped, unknown = _extract_zip(data, root)
+            count, total, skipped, modes = _extract_zip(data, root)
             self.assertEqual(count, 1)
             self.assertEqual(total, 4)
             self.assertEqual(skipped, 1)
-            self.assertIsInstance(unknown, set)
+            self.assertIsInstance(modes, dict)
             self.assertEqual(_project_root(root).name, "project")
 
     def test_preserves_known_zip_executable_mode(self):
@@ -56,8 +56,8 @@ class IntakeTests(unittest.TestCase):
             zf.writestr(info, "#!/usr/bin/env python3\n")
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _, _, _, unknown = _extract_zip(out.getvalue(), root)
-            self.assertEqual(unknown, set())
+            _, _, _, modes = _extract_zip(out.getvalue(), root)
+            self.assertEqual(modes, {"script.py": 0o755})
             mode = (root / "script.py").stat().st_mode & 0o777
             self.assertEqual(mode, 0o555)
 
@@ -69,8 +69,8 @@ class IntakeTests(unittest.TestCase):
             zf.writestr(info, "#!/usr/bin/env python3\n")
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
-            _, _, _, unknown = _extract_zip(out.getvalue(), root)
-            self.assertEqual(unknown, {"script.py"})
+            _, _, _, modes = _extract_zip(out.getvalue(), root)
+            self.assertEqual(modes, {"script.py": None})
             mode = (root / "script.py").stat().st_mode & 0o777
             self.assertEqual(mode, 0o444)
 
@@ -123,6 +123,11 @@ class UploadedWorkspaceTests(unittest.TestCase):
                 )
                 self.assertEqual(prepared.intake.file_count, 1)
                 self.assertTrue((prepared.root / "a.py").is_file())
+                self.assertEqual(prepared.intake.targets, ["a.py"])
+                self.assertEqual(
+                    [item.role for item in prepared.intake.files],
+                    ["target"],
+                )
 
     def test_autodetects_tar_without_archive_extension(self):
         req = UploadedCheckRequest(
@@ -142,6 +147,11 @@ class UploadedWorkspaceTests(unittest.TestCase):
                 self.assertEqual(prepared.intake.file_count, 1)
                 self.assertTrue((prepared.root / "a.py").is_file())
                 self.assertEqual(prepared.unknown_mode_paths, set())
+                self.assertEqual(prepared.intake.targets, ["a.py"])
+                self.assertEqual(
+                    prepared.intake.files[0].mode_provenance,
+                    "archive",
+                )
 
     def test_accepts_multiple_uploaded_plain_files(self):
         req = UploadedCheckRequest(
@@ -172,6 +182,21 @@ class UploadedWorkspaceTests(unittest.TestCase):
                 self.assertEqual(
                     prepared.unknown_mode_paths,
                     {"a.py", "b.py"},
+                )
+                self.assertEqual(
+                    prepared.intake.targets,
+                    ["a.py", "b.py"],
+                )
+                self.assertEqual(
+                    {item.role for item in prepared.intake.files},
+                    {"target"},
+                )
+                self.assertEqual(
+                    {
+                        item.mode_provenance
+                        for item in prepared.intake.files
+                    },
+                    {"unknown"},
                 )
 
     def test_rejects_malformed_archive_hint(self):
