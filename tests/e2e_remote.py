@@ -524,7 +524,7 @@ def main() -> int:
                 "targets": ["src/bad.ts"],
                 "tools": ["typescript"],
             },
-            9,
+            10,
         )
     )
     assert bad_frontend["status"] == (  # nosec B101
@@ -536,7 +536,7 @@ def main() -> int:
     ), bad_frontend
     cases.append(
         (
-            "E2E-010",
+            "E2E-011",
             "PASS frontend TypeScript negative case",
         )
     )
@@ -624,7 +624,7 @@ def main() -> int:
     expect_error(moving)
     cases.append(
         (
-            "E2E-014",
+            "E2E-015",
             "PASS moving GitHub ref rejected",
         )
     )
@@ -639,7 +639,7 @@ def main() -> int:
                 "tools": ["ruff"],
                 "dependency_mode": "none",
             },
-            14,
+            15,
         )
     )
     assert github["intake"]["source_commit"] == (  # nosec B101
@@ -649,7 +649,7 @@ def main() -> int:
     assert github["intake"]["files"], github  # nosec B101
     cases.append(
         (
-            "E2E-015",
+            "E2E-016",
             "PASS exact GitHub target/provenance route",
         )
     )
