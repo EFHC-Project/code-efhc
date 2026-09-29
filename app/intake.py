@@ -458,6 +458,7 @@ def inline_workspace(
         project.mkdir()
         total = 0
         evidence: list[FileEvidence] = []
+        unknown_mode_paths: set[str] = set()
         mode_by_path: dict[str, int | None] = {}
         by_path = {validate_path(f.path): f for f in files}
         for rel, content in pairs:
@@ -468,6 +469,7 @@ def inline_workspace(
             dst.write_bytes(data)
             os.chmod(dst, _readonly_mode(source.mode))
             total += len(data)
+            mode_by_path[rel] = source.mode
             if source.mode is None:
                 unknown_mode_paths.add(rel)
             evidence.append(
@@ -505,10 +507,7 @@ def inline_workspace(
             mypy_path=mypy_path,
             targets=selected_targets,
             unknown_mode_paths=unknown_mode_paths,
-            mode_by_path={
-                item.path: item.mode
-                for item in evidence
-            },
+            mode_by_path=mode_by_path,
         )
 
 
@@ -520,7 +519,7 @@ def uploaded_workspace(req: UploadedCheckRequest):
         project.mkdir()
         count = total = skipped = 0
         identities: list[str] = []
-        unknown_mode_paths: set[str] = set()
+        mode_by_path: dict[str, int | None] = {}
         for index, file_ref in enumerate(req.files, start=1):
             identity = file_ref.file_id.strip()
             if not identity:
