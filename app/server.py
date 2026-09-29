@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, ValidationError
@@ -284,6 +285,13 @@ def _execute(
     ]
     findings = [f for result in results for f in result.findings]
     statuses = {result.status for result in results}
+    status: Literal[
+        "PASS",
+        "FAIL_FINDINGS",
+        "FAIL_CONFIG",
+        "PARTIAL",
+        "ERROR",
+    ]
     if "CONFIG_ERROR" in statuses:
         status = "FAIL_CONFIG"
     elif findings:
@@ -393,6 +401,13 @@ def _compare_outputs(
                 )
 
     statuses = {baseline.status, candidate.status}
+    status: Literal[
+        "PASS",
+        "FAIL_INTRODUCED",
+        "FAIL_CONFIG",
+        "PARTIAL",
+        "ERROR",
+    ]
     if "FAIL_CONFIG" in statuses:
         status = "FAIL_CONFIG"
     elif "ERROR" in statuses:
@@ -533,35 +548,35 @@ async def mcp(request: Request):
     args = params.get("arguments") or {}
     try:
         if name == "run_python_quality_gate":
-            req = UploadedCheckRequest.model_validate(args)
-            with uploaded_workspace(req) as prepared:
+            uploaded_req = UploadedCheckRequest.model_validate(args)
+            with uploaded_workspace(uploaded_req) as prepared:
                 return _mcp_success(
                     rid,
-                    _execute(prepared, req.tools),
+                    _execute(prepared, uploaded_req.tools),
                 )
         if name == "run_python_quality_gate_from_github":
-            req = GitHubCheckRequest.model_validate(args)
-            with github_workspace(req) as prepared:
+            github_req = GitHubCheckRequest.model_validate(args)
+            with github_workspace(github_req) as prepared:
                 return _mcp_success(
                     rid,
-                    _execute(prepared, req.tools),
+                    _execute(prepared, github_req.tools),
                 )
         if name == "run_python_quality_gate_inline":
-            req = CheckRequest.model_validate(args)
+            inline_req = CheckRequest.model_validate(args)
             with inline_workspace(
-                req.files,
-                req.dependency_mode,
-                req.dependencies,
-                req.dependency_authorized,
-                req.targets,
+                inline_req.files,
+                inline_req.dependency_mode,
+                inline_req.dependencies,
+                inline_req.dependency_authorized,
+                inline_req.targets,
             ) as prepared:
                 return _mcp_success(
                     rid,
-                    _execute(prepared, req.tools),
+                    _execute(prepared, inline_req.tools),
                 )
         if name == "compare_python_quality_gate":
-            req = CompareCheckRequest.model_validate(args)
-            return _mcp_success(rid, _compare(req))
+            compare_req = CompareCheckRequest.model_validate(args)
+            return _mcp_success(rid, _compare(compare_req))
         return _mcp_error(rid, -32601, "Unknown tool")
     except (ValidationError, InputRejected) as exc:
         return _mcp_error(rid, -32602, str(exc)[:2000])
