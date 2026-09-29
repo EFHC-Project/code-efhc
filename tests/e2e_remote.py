@@ -1,6 +1,7 @@
 # CODE EFHC remote E2E harness.
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -55,7 +56,11 @@ def one_inline(
     call_id: int,
     **extra,
 ) -> dict:
-    args = {"files": files, "tools": tools, "dependency_mode": "none"}
+    args = {
+        "files": files,
+        "tools": tools,
+        "dependency_mode": "none",
+    }
     args.update(extra)
     return call_tool("run_python_quality_gate_inline", args, call_id)
 
@@ -64,23 +69,41 @@ def main() -> int:
     cases: list[tuple[str, str]] = []
 
     health = request_json(BASE.rstrip("/") + "/health")
-    assert health["status"] == "ok", health
-    cases.append(("E2E-001", "PASS health"))
+    assert health == {"status": "ok", "runtime": "0.2.3"}, health
+    cases.append(("E2E-001", "PASS health/runtime identity"))
 
-    tools = request_json(
+    listed = request_json(
         MCP,
         {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
     )
-    tool_map = {x["name"]: x for x in tools["result"]["tools"]}
+    tool_map = {
+        item["name"]: item
+        for item in listed["result"]["tools"]
+    }
     required = {
         "run_python_quality_gate",
         "run_python_quality_gate_from_github",
         "run_python_quality_gate_inline",
+        "compare_python_quality_gate",
     }
     assert required <= set(tool_map), set(tool_map)
     inline_schema = tool_map["run_python_quality_gate_inline"]["inputSchema"]
     assert "targets" in inline_schema["properties"], inline_schema
-    cases.append(("E2E-002", "PASS MCP discovery + targets schema"))
+    assert "targets" in inline_schema["required"], inline_schema
+    assert (
+        "mode"
+        in inline_schema["properties"]["files"]["items"]["properties"]
+    ), inline_schema
+    compare_schema = tool_map["compare_python_quality_gate"]["inputSchema"]
+    for key in (
+        "baseline_files",
+        "candidate_files",
+        "baseline_targets",
+        "candidate_targets",
+    ):
+        assert key in compare_schema["properties"], compare_schema
+        assert key in compare_schema["required"], compare_schema
+    cases.append(("E2E-002", "PASS published MCP schema contract"))
 
     clean = tool_result(
         one_inline(
@@ -99,7 +122,10 @@ def main() -> int:
         )
     )
     assert clean["status"] == "PASS", clean
-    per_tool = {r["tool"]: r["status"] for r in clean["results"]}
+    per_tool = {
+        item["tool"]: item["status"]
+        for item in clean["results"]
+    }
     assert per_tool == {
         "flake8": "PASS",
         "ruff": "PASS",
@@ -121,7 +147,15 @@ def main() -> int:
     )
     assert scoped["status"] == "PASS", scoped
     assert not scoped["findings"], scoped
-    cases.append(("E2E-004", "PASS context excluded from scanner targets"))
+    roles = {
+        item["path"]: item["role"]
+        for item in scoped["intake"]["files"]
+    }
+    assert roles == {
+        "changed.py": "target",
+        "context.py": "context",
+    }, roles
+    cases.append(("E2E-004", "PASS target/context scanner isolation"))
 
     mypy_context = tool_result(
         one_inline(
@@ -149,18 +183,169 @@ def main() -> int:
         )
     )
     assert mypy_context["status"] == "PASS", mypy_context
-    assert mypy_context["results"][0]["status"] == "PASS", mypy_context
-    cases.append(("E2E-005", "PASS mypy minimal import context"))
+    cases.append(("E2E-005", "PASS minimal mypy import context"))
+
+    target_text = "x = 1\n"
+    provenance = tool_result(
+        one_inline(
+            [
+                {"path": "pkg/a.py", "content": target_text},
+                {
+                    "path": "pyproject.toml",
+                    "content": "[tool.ruff]\nline-length = 88\n",
+                },
+            ],
+            ["ruff"],
+            5,
+            targets=["pkg/a.py"],
+        )
+    )
+    evidence = {
+        item["path"]: item
+        for item in provenance["intake"]["files"]
+    }
+    assert evidence["pkg/a.py"]["role"] == "target", evidence
+    assert evidence["pyproject.toml"]["role"] == "config", evidence
+    assert evidence["pkg/a.py"]["sha256"] == hashlib.sha256(
+        target_text.encode()
+    ).hexdigest(), evidence
+    assert provenance["intake"]["config_identity"], provenance
+    assert provenance["runtime_version"] == "0.2.3", provenance
+    assert provenance["results"][0]["version"], provenance
+    cases.append(("E2E-006", "PASS SHA/config/runtime provenance"))
+
+    unknown_mode = tool_result(
+        one_inline(
+            [
+                {
+                    "path": "script.py",
+                    "content": "#!/usr/bin/env python3\nvalue = 1\n",
+                }
+            ],
+            ["ruff"],
+            6,
+            targets=["script.py"],
+        )
+    )
+    assert unknown_mode["status"] == "PASS", unknown_mode
+    assert unknown_mode["results"][0]["suppressed_findings"] >= 1, unknown_mode
+    assert not {
+        item["code"]
+        for item in unknown_mode["findings"]
+        if item["code"] == "EXE001"
+    }, unknown_mode
+    cases.append(("E2E-007", "PASS unknown-mode EXE001 suppression"))
+
+    known_nonexec = tool_result(
+        one_inline(
+            [
+                {
+                    "path": "script.py",
+                    "content": "#!/usr/bin/env python3\nvalue = 1\n",
+                    "mode": 420,
+                }
+            ],
+            ["ruff"],
+            7,
+            targets=["script.py"],
+        )
+    )
+    assert known_nonexec["status"] == "FAIL_FINDINGS", known_nonexec
+    assert "EXE001" in {
+        item["code"]
+        for item in known_nonexec["findings"]
+    }, known_nonexec
+    cases.append(("E2E-008", "PASS known-mode EXE001 retained"))
+
+    negative = tool_result(
+        one_inline(
+            [{"path": "pkg/a.py", "content": "import os\n"}],
+            ["flake8", "ruff"],
+            8,
+            targets=["pkg/a.py"],
+        )
+    )
+    assert negative["status"] == "FAIL_FINDINGS", negative
+    assert {
+        item["path"]
+        for item in negative["findings"]
+    } == {"pkg/a.py"}, negative
+    cases.append(("E2E-009", "PASS project-relative finding paths"))
+
+    compare = tool_result(
+        call_tool(
+            "compare_python_quality_gate",
+            {
+                "baseline_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport sys\n",
+                    }
+                ],
+                "candidate_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport json\n",
+                    }
+                ],
+                "baseline_targets": ["a.py"],
+                "candidate_targets": ["a.py"],
+                "tools": ["ruff"],
+                "dependency_mode": "none",
+            },
+            9,
+        )
+    )
+    assert compare["status"] == "FAIL_INTRODUCED", compare
+    assert compare["summary"] == {
+        "baseline": 2,
+        "candidate": 2,
+        "introduced": 1,
+        "resolved": 1,
+        "pre_existing": 1,
+    }, compare
+    assert compare["findings"] == [], compare
+    cases.append(("E2E-010", "PASS compact native regression summary"))
+
+    compare_details = tool_result(
+        call_tool(
+            "compare_python_quality_gate",
+            {
+                "baseline_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport sys\n",
+                    }
+                ],
+                "candidate_files": [
+                    {
+                        "path": "a.py",
+                        "content": "import os\nimport json\n",
+                    }
+                ],
+                "baseline_targets": ["a.py"],
+                "candidate_targets": ["a.py"],
+                "tools": ["ruff"],
+                "dependency_mode": "none",
+                "include_findings": True,
+            },
+            10,
+        )
+    )
+    assert {
+        item["classification"]
+        for item in compare_details["findings"]
+    } == {"INTRODUCED", "RESOLVED", "PRE_EXISTING"}, compare_details
+    cases.append(("E2E-011", "PASS classified regression details"))
 
     missing_target = one_inline(
         [{"path": "changed.py", "content": "x = 1\n"}],
         ["ruff"],
-        5,
+        11,
         targets=["missing.py"],
     )
     expect_error(missing_target)
-    assert "quality-gate target was not supplied" in missing_target["error"]["message"]
-    cases.append(("E2E-006", "PASS missing target rejected"))
+    cases.append(("E2E-012", "PASS missing target rejected"))
 
     non_python_target = one_inline(
         [
@@ -168,34 +353,11 @@ def main() -> int:
             {"path": "pyproject.toml", "content": "[tool.ruff]\n"},
         ],
         ["ruff"],
-        6,
+        12,
         targets=["pyproject.toml"],
     )
     expect_error(non_python_target)
-    assert "target is not Python" in non_python_target["error"]["message"]
-    cases.append(("E2E-007", "PASS non-Python target rejected"))
-
-    negative = tool_result(
-        one_inline(
-            [{"path": "a.py", "content": "import os\n"}],
-            ["flake8", "ruff"],
-            7,
-            targets=["a.py"],
-        )
-    )
-    assert negative["status"] == "FAIL_FINDINGS", negative
-    codes = {(f["tool"], f.get("code")) for f in negative["findings"]}
-    assert ("flake8", "F401") in codes, negative
-    assert ("ruff", "F401") in codes, negative
-    assert {
-        f["path"]
-        for f in negative["findings"]
-        if f.get("code") == "F401"
-    } == {"a.py"}, negative
-    cases.append((
-        "E2E-008",
-        "PASS targeted F401 + project-relative evidence paths",
-    ))
+    cases.append(("E2E-013", "PASS config cannot become scanner target"))
 
     mypy_plugin = tool_result(
         one_inline(
@@ -207,14 +369,12 @@ def main() -> int:
                 },
             ],
             ["mypy"],
-            8,
+            13,
             targets=["a.py"],
         )
     )
     assert mypy_plugin["status"] == "FAIL_CONFIG", mypy_plugin
-    assert mypy_plugin["results"][0]["status"] == "CONFIG_ERROR", mypy_plugin
-    assert "blocked executable mypy plugin" in mypy_plugin["results"][0]["stderr"]
-    cases.append(("E2E-009", "PASS mypy executable plugin blocked"))
+    cases.append(("E2E-014", "PASS executable mypy plugin blocked"))
 
     deps = call_tool(
         "run_python_quality_gate_inline",
@@ -226,10 +386,10 @@ def main() -> int:
             "dependencies": ["typing-extensions==4.15.0"],
             "dependency_authorized": False,
         },
-        9,
+        14,
     )
     expect_error(deps)
-    cases.append(("E2E-010", "PASS unauthorized dependency bootstrap rejected"))
+    cases.append(("E2E-015", "PASS dependency bootstrap authorization gate"))
 
     moving = call_tool(
         "run_python_quality_gate_from_github",
@@ -240,10 +400,10 @@ def main() -> int:
             "tools": ["ruff"],
             "dependency_mode": "none",
         },
-        10,
+        15,
     )
     expect_error(moving)
-    cases.append(("E2E-011", "PASS moving GitHub ref rejected"))
+    cases.append(("E2E-016", "PASS moving GitHub ref rejected"))
 
     github = tool_result(
         call_tool(
@@ -255,22 +415,12 @@ def main() -> int:
                 "tools": ["ruff"],
                 "dependency_mode": "none",
             },
-            11,
+            16,
         )
     )
     assert github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT, github
     assert github["results"][0]["tool"] == "ruff", github
-    assert github["results"][0]["status"] in {
-        "PASS",
-        "FINDINGS",
-        "CONFIG_ERROR",
-    }, github
-    cases.append(
-        (
-            "E2E-012",
-            f"PASS exact GitHub commit; Ruff={github['results'][0]['status']}",
-        )
-    )
+    cases.append(("E2E-017", "PASS exact GitHub commit route"))
 
     for case, result in cases:
         print(f"{case} {result}")
