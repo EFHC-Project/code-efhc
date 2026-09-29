@@ -361,6 +361,26 @@ def run_eslint(
     root: Path,
     targets: list[str],
 ) -> FrontendToolResult:
+    applicable = [
+        item
+        for item in targets
+        if PurePosixPath(item).suffix.lower()
+        in {".cjs", ".js", ".jsx", ".mjs"}
+    ]
+    if not applicable:
+        return FrontendToolResult(
+            tool="eslint",
+            status="NOT_APPLICABLE",
+            exit_code=0,
+            raw_exit_code=0,
+            notes=[
+                (
+                    "Trusted ESLint verification applies to "
+                    "JavaScript-family targets. TypeScript targets "
+                    "are verified by the TypeScript compiler."
+                )
+            ],
+        )
     proc = _run(
         [
             ESLINT,
@@ -369,7 +389,7 @@ def run_eslint(
             "--no-config-lookup",
             "--format",
             "json",
-            *targets,
+            *applicable,
         ],
         root,
     )
@@ -422,8 +442,9 @@ def run_eslint(
         findings=findings,
         notes=[
             (
-                "Uses CODE EFHC trusted ESLint configuration; "
-                "project executable ESLint config is not loaded."
+                "Uses CODE EFHC trusted JavaScript ESLint "
+                "configuration; project executable ESLint config "
+                "is not loaded."
             )
         ],
         stderr=proc.stderr[-4000:],
