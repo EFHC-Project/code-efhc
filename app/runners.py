@@ -44,8 +44,14 @@ def _unsafe_config(root: Path, tool: str) -> str | None:
     if tool == "flake8":
         for name in (".flake8", "setup.cfg", "tox.ini"):
             path = root / name
-            if path.is_file() and re.search(r"(?im)^\s*\[flake8:local-plugins\]\s*$", _read_config(path)):
-                return f"blocked Flake8 local-plugins configuration in {name}"
+            if path.is_file() and re.search(
+                r"(?im)^\s*\[flake8:local-plugins\]\s*$",
+                _read_config(path),
+            ):
+                return (
+                    "blocked Flake8 local-plugins configuration "
+                    f"in {name}"
+                )
     return None
 
 
@@ -68,7 +74,12 @@ def _offline_env(mypy_path: str | None = None) -> dict[str, str]:
     return env
 
 
-def _run(tool: str, cmd: list[str], root: Path, mypy_path: str | None = None):
+def _run(
+    tool: str,
+    cmd: list[str],
+    root: Path,
+    mypy_path: str | None = None,
+):
     unsafe = _unsafe_config(root, tool)
     if unsafe:
         return ToolResult(tool=tool, status="CONFIG_ERROR", stderr=unsafe)
@@ -76,13 +87,40 @@ def _run(tool: str, cmd: list[str], root: Path, mypy_path: str | None = None):
     if not exe:
         return None
     try:
-        return subprocess.run(cmd, cwd=root, text=True, capture_output=True, timeout=TIMEOUT, env=_offline_env(mypy_path))
-    except subprocess.TimeoutExpired as e:
-        return subprocess.CompletedProcess(cmd, 124, e.stdout or "", e.stderr or "timeout")
+        return subprocess.run(
+            cmd,
+            cwd=root,
+            text=True,
+            capture_output=True,
+            timeout=TIMEOUT,
+            env=_offline_env(mypy_path),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            cmd,
+            124,
+            exc.stdout or "",
+            exc.stderr or "timeout",
+        )
 
 
 def _scan_targets(targets: list[str] | None) -> list[str]:
     return targets or ["."]
+
+
+def _evidence_path(root: Path, raw: str) -> str:
+    if not raw:
+        return ""
+    path = Path(raw)
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return path.as_posix()
+    normalized = path.as_posix()
+    if normalized.startswith("./"):
+        return normalized[2:]
+    return normalized
 
 
 def run_flake8(
@@ -90,19 +128,46 @@ def run_flake8(
     mypy_path: str | None = None,
     targets: list[str] | None = None,
 ):
-    p = _run("flake8", ["flake8", *_scan_targets(targets)], root, mypy_path)
+    p = _run(
+        "flake8",
+        ["flake8", *_scan_targets(targets)],
+        root,
+        mypy_path,
+    )
     if isinstance(p, ToolResult):
         return p
     if p is None:
         return ToolResult(tool="flake8", status="TOOL_UNAVAILABLE")
     finds = []
-    rx = re.compile(r"^(.*?):(\d+):(\d+):\s+([A-Z]\d+)\s+(.*)$")
+    rx = re.compile(
+        r"^(.*?):(\d+):(\d+):\s+([A-Z]\d+)\s+(.*)$"
+    )
     for line in p.stdout.splitlines():
         m = rx.match(line)
         if m:
-            finds.append(Finding(tool="flake8", path=m[1], line=int(m[2]), column=int(m[3]), code=m[4], message=m[5]))
-    status = "PASS" if p.returncode == 0 else ("FINDINGS" if finds else "CONFIG_ERROR")
-    return ToolResult(tool="flake8", status=status, exit_code=p.returncode, version=_version(["flake8", "--version"]), findings=finds, stderr=p.stderr[-4000:])
+            finds.append(
+                Finding(
+                    tool="flake8",
+                    path=_evidence_path(root, m[1]),
+                    line=int(m[2]),
+                    column=int(m[3]),
+                    code=m[4],
+                    message=m[5],
+                )
+            )
+    status = (
+        "PASS"
+        if p.returncode == 0
+        else ("FINDINGS" if finds else "CONFIG_ERROR")
+    )
+    return ToolResult(
+        tool="flake8",
+        status=status,
+        exit_code=p.returncode,
+        version=_version(["flake8", "--version"]),
+        findings=finds,
+        stderr=p.stderr[-4000:],
+    )
 
 
 def run_ruff(
@@ -112,7 +177,14 @@ def run_ruff(
 ):
     p = _run(
         "ruff",
-        ["ruff", "check", "--output-format", "json", "--no-cache", *_scan_targets(targets)],
+        [
+            "ruff",
+            "check",
+            "--output-format",
+            "json",
+            "--no-cache",
+            *_scan_targets(targets),
+        ],
         root,
         mypy_path,
     )
@@ -123,13 +195,36 @@ def run_ruff(
     finds = []
     try:
         data = json.loads(p.stdout or "[]")
-        for x in data:
-            loc = x.get("location") or {}
-            finds.append(Finding(tool="ruff", path=x.get("filename", ""), line=loc.get("row"), column=loc.get("column"), code=x.get("code"), message=x.get("message", "")))
+        for item in data:
+            loc = item.get("location") or {}
+            finds.append(
+                Finding(
+                    tool="ruff",
+                    path=_evidence_path(
+                        root,
+                        item.get("filename", ""),
+                    ),
+                    line=loc.get("row"),
+                    column=loc.get("column"),
+                    code=item.get("code"),
+                    message=item.get("message", ""),
+                )
+            )
     except Exception:
         data = []
-    status = "PASS" if p.returncode == 0 else ("FINDINGS" if finds else "CONFIG_ERROR")
-    return ToolResult(tool="ruff", status=status, exit_code=p.returncode, version=_version(["ruff", "--version"]), findings=finds, stderr=p.stderr[-4000:])
+    status = (
+        "PASS"
+        if p.returncode == 0
+        else ("FINDINGS" if finds else "CONFIG_ERROR")
+    )
+    return ToolResult(
+        tool="ruff",
+        status=status,
+        exit_code=p.returncode,
+        version=_version(["ruff", "--version"]),
+        findings=finds,
+        stderr=p.stderr[-4000:],
+    )
 
 
 def run_mypy(
@@ -155,13 +250,35 @@ def run_mypy(
     if p is None:
         return ToolResult(tool="mypy", status="TOOL_UNAVAILABLE")
     finds = []
-    rx = re.compile(r"^(.*?):(\d+):(\d+):\s+error:\s+(.*?)\s+\[([^\]]+)\]$")
+    rx = re.compile(
+        r"^(.*?):(\d+):(\d+):\s+error:\s+(.*?)\s+\[([^\]]+)\]$"
+    )
     for line in p.stdout.splitlines():
         m = rx.match(line)
         if m:
-            finds.append(Finding(tool="mypy", path=m[1], line=int(m[2]), column=int(m[3]), code=m[5], message=m[4]))
-    status = "PASS" if p.returncode == 0 else ("FINDINGS" if finds else "CONFIG_ERROR")
-    return ToolResult(tool="mypy", status=status, exit_code=p.returncode, version=_version(["mypy", "--version"]), findings=finds, stderr=p.stderr[-4000:])
+            finds.append(
+                Finding(
+                    tool="mypy",
+                    path=_evidence_path(root, m[1]),
+                    line=int(m[2]),
+                    column=int(m[3]),
+                    code=m[5],
+                    message=m[4],
+                )
+            )
+    status = (
+        "PASS"
+        if p.returncode == 0
+        else ("FINDINGS" if finds else "CONFIG_ERROR")
+    )
+    return ToolResult(
+        tool="mypy",
+        status=status,
+        exit_code=p.returncode,
+        version=_version(["mypy", "--version"]),
+        findings=finds,
+        stderr=p.stderr[-4000:],
+    )
 
 
 def run_bandit(
@@ -183,12 +300,42 @@ def run_bandit(
     finds = []
     try:
         data = json.loads(p.stdout or "{}")
-        for x in data.get("results", []):
-            finds.append(Finding(tool="bandit", path=x.get("filename", ""), line=x.get("line_number"), column=x.get("col_offset"), code=x.get("test_id"), message=x.get("issue_text", ""), severity=x.get("issue_severity"), confidence=x.get("issue_confidence")))
+        for item in data.get("results", []):
+            finds.append(
+                Finding(
+                    tool="bandit",
+                    path=_evidence_path(
+                        root,
+                        item.get("filename", ""),
+                    ),
+                    line=item.get("line_number"),
+                    column=item.get("col_offset"),
+                    code=item.get("test_id"),
+                    message=item.get("issue_text", ""),
+                    severity=item.get("issue_severity"),
+                    confidence=item.get("issue_confidence"),
+                )
+            )
     except Exception:
         data = {}
-    status = "PASS" if p.returncode == 0 else ("FINDINGS" if finds else "CONFIG_ERROR")
-    return ToolResult(tool="bandit", status=status, exit_code=p.returncode, version=_version(["bandit", "--version"]), findings=finds, stderr=p.stderr[-4000:])
+    status = (
+        "PASS"
+        if p.returncode == 0
+        else ("FINDINGS" if finds else "CONFIG_ERROR")
+    )
+    return ToolResult(
+        tool="bandit",
+        status=status,
+        exit_code=p.returncode,
+        version=_version(["bandit", "--version"]),
+        findings=finds,
+        stderr=p.stderr[-4000:],
+    )
 
 
-RUNNERS = {"flake8": run_flake8, "ruff": run_ruff, "mypy": run_mypy, "bandit": run_bandit}
+RUNNERS = {
+    "flake8": run_flake8,
+    "ruff": run_ruff,
+    "mypy": run_mypy,
+    "bandit": run_bandit,
+}
