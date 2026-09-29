@@ -17,8 +17,10 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from .models import (
+    DependencyMode,
     FileEvidence,
     FileInput,
+    FileRole,
     GitHubCheckRequest,
     IntakeReport,
     UploadedCheckRequest,
@@ -65,7 +67,7 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _role_for_path(rel: str, targets: set[str]) -> str:
+def _role_for_path(rel: str, targets: set[str]) -> FileRole:
     name = PurePosixPath(rel).name.lower()
     if name in CONFIG_NAMES:
         return "config"
@@ -322,7 +324,7 @@ def _select_inline_targets(
 @contextmanager
 def inline_workspace(
     files: list[FileInput],
-    mode: str = "none",
+    mode: DependencyMode = "none",
     dependencies: list[str] | None = None,
     authorized: bool = False,
     targets: list[str] | None = None,
