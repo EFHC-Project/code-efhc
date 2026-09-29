@@ -81,8 +81,16 @@ def _run(tool: str, cmd: list[str], root: Path, mypy_path: str | None = None):
         return subprocess.CompletedProcess(cmd, 124, e.stdout or "", e.stderr or "timeout")
 
 
-def run_flake8(root: Path, mypy_path: str | None = None):
-    p = _run("flake8", ["flake8", "."], root, mypy_path)
+def _scan_targets(targets: list[str] | None) -> list[str]:
+    return targets or ["."]
+
+
+def run_flake8(
+    root: Path,
+    mypy_path: str | None = None,
+    targets: list[str] | None = None,
+):
+    p = _run("flake8", ["flake8", *_scan_targets(targets)], root, mypy_path)
     if isinstance(p, ToolResult):
         return p
     if p is None:
@@ -97,8 +105,17 @@ def run_flake8(root: Path, mypy_path: str | None = None):
     return ToolResult(tool="flake8", status=status, exit_code=p.returncode, version=_version(["flake8", "--version"]), findings=finds, stderr=p.stderr[-4000:])
 
 
-def run_ruff(root: Path, mypy_path: str | None = None):
-    p = _run("ruff", ["ruff", "check", ".", "--output-format", "json", "--no-cache"], root, mypy_path)
+def run_ruff(
+    root: Path,
+    mypy_path: str | None = None,
+    targets: list[str] | None = None,
+):
+    p = _run(
+        "ruff",
+        ["ruff", "check", "--output-format", "json", "--no-cache", *_scan_targets(targets)],
+        root,
+        mypy_path,
+    )
     if isinstance(p, ToolResult):
         return p
     if p is None:
@@ -115,8 +132,24 @@ def run_ruff(root: Path, mypy_path: str | None = None):
     return ToolResult(tool="ruff", status=status, exit_code=p.returncode, version=_version(["ruff", "--version"]), findings=finds, stderr=p.stderr[-4000:])
 
 
-def run_mypy(root: Path, mypy_path: str | None = None):
-    p = _run("mypy", ["mypy", ".", "--show-column-numbers", "--show-error-codes", "--no-error-summary", "--no-incremental"], root, mypy_path)
+def run_mypy(
+    root: Path,
+    mypy_path: str | None = None,
+    targets: list[str] | None = None,
+):
+    p = _run(
+        "mypy",
+        [
+            "mypy",
+            "--show-column-numbers",
+            "--show-error-codes",
+            "--no-error-summary",
+            "--no-incremental",
+            *_scan_targets(targets),
+        ],
+        root,
+        mypy_path,
+    )
     if isinstance(p, ToolResult):
         return p
     if p is None:
@@ -131,8 +164,18 @@ def run_mypy(root: Path, mypy_path: str | None = None):
     return ToolResult(tool="mypy", status=status, exit_code=p.returncode, version=_version(["mypy", "--version"]), findings=finds, stderr=p.stderr[-4000:])
 
 
-def run_bandit(root: Path, mypy_path: str | None = None):
-    p = _run("bandit", ["bandit", "-r", ".", "-f", "json", "-q"], root, mypy_path)
+def run_bandit(
+    root: Path,
+    mypy_path: str | None = None,
+    targets: list[str] | None = None,
+):
+    scan = _scan_targets(targets)
+    cmd = (
+        ["bandit", "-r", ".", "-f", "json", "-q"]
+        if targets is None
+        else ["bandit", "-f", "json", "-q", *scan]
+    )
+    p = _run("bandit", cmd, root, mypy_path)
     if isinstance(p, ToolResult):
         return p
     if p is None:
