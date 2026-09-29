@@ -112,11 +112,12 @@ def _scan_targets(targets: list[str] | None) -> list[str]:
 def _result_status(
     returncode: int,
     findings: list[Finding],
+    suppressed_findings: int = 0,
 ) -> Literal["PASS", "FINDINGS", "CONFIG_ERROR"]:
-    if returncode == 0:
-        return "PASS"
     if findings:
         return "FINDINGS"
+    if returncode == 0 or suppressed_findings > 0:
+        return "PASS"
     return "CONFIG_ERROR"
 
 
@@ -139,7 +140,9 @@ def run_flake8(
     root: Path,
     mypy_path: str | None = None,
     targets: list[str] | None = None,
+    unknown_mode_paths: set[str] | None = None,
 ):
+    del unknown_mode_paths
     p = _run(
         "flake8",
         ["flake8", *_scan_targets(targets)],
@@ -181,6 +184,7 @@ def run_ruff(
     root: Path,
     mypy_path: str | None = None,
     targets: list[str] | None = None,
+    unknown_mode_paths: set[str] | None = None,
 ):
     p = _run(
         "ruff",
@@ -200,31 +204,43 @@ def run_ruff(
     if p is None:
         return ToolResult(tool="ruff", status="TOOL_UNAVAILABLE")
     finds: list[Finding] = []
+    suppressed = 0
+    unknown_modes = unknown_mode_paths or set()
     try:
         data = json.loads(p.stdout or "[]")
         for item in data:
+            path = _evidence_path(root, item.get("filename", ""))
+            code = item.get("code")
+            if code == "EXE001" and path in unknown_modes:
+                suppressed += 1
+                continue
             loc = item.get("location") or {}
             finds.append(
                 Finding(
                     tool="ruff",
-                    path=_evidence_path(
-                        root,
-                        item.get("filename", ""),
-                    ),
+                    path=path,
                     line=loc.get("row"),
                     column=loc.get("column"),
-                    code=item.get("code"),
+                    code=code,
                     message=item.get("message", ""),
                 )
             )
     except Exception:
         data = []
+    notes = []
+    if suppressed:
+        notes.append(
+            "Suppressed Ruff EXE001 where executable-mode provenance "
+            "was unavailable."
+        )
     return ToolResult(
         tool="ruff",
-        status=_result_status(p.returncode, finds),
+        status=_result_status(p.returncode, finds, suppressed),
         exit_code=p.returncode,
         version=_version(["ruff", "--version"]),
         findings=finds,
+        suppressed_findings=suppressed,
+        notes=notes,
         stderr=p.stderr[-4000:],
     )
 
@@ -233,7 +249,9 @@ def run_mypy(
     root: Path,
     mypy_path: str | None = None,
     targets: list[str] | None = None,
+    unknown_mode_paths: set[str] | None = None,
 ):
+    del unknown_mode_paths
     p = _run(
         "mypy",
         [
@@ -282,7 +300,9 @@ def run_bandit(
     root: Path,
     mypy_path: str | None = None,
     targets: list[str] | None = None,
+    unknown_mode_paths: set[str] | None = None,
 ):
+    del unknown_mode_paths
     scan = _scan_targets(targets)
     cmd = (
         ["bandit", "-r", ".", "-f", "json", "-q"]
