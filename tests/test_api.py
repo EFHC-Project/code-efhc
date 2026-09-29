@@ -11,7 +11,7 @@ class ApiTests(unittest.TestCase):
     def test_health(self):
         body = self.c.get("/health").json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["runtime"], "0.2.0")
+        self.assertEqual(body["runtime"], "0.2.2")
 
     def test_mcp_lists_file_and_github_tools(self):
         r = self.c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
