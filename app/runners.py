@@ -6,8 +6,9 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
-from .models import Finding, ToolResult
+from .models import Finding, ToolName, ToolResult
 
 TIMEOUT = 60
 CONFIG_LIMIT = 300_000
@@ -30,7 +31,7 @@ def _read_config(path: Path) -> str:
         return ""
 
 
-def _unsafe_config(root: Path, tool: str) -> str | None:
+def _unsafe_config(root: Path, tool: ToolName) -> str | None:
     if tool == "mypy":
         for name in ("mypy.ini", ".mypy.ini", "setup.cfg", "pyproject.toml"):
             path = root / name
@@ -75,7 +76,7 @@ def _offline_env(mypy_path: str | None = None) -> dict[str, str]:
 
 
 def _run(
-    tool: str,
+    tool: ToolName,
     cmd: list[str],
     root: Path,
     mypy_path: str | None = None,
@@ -108,6 +109,17 @@ def _scan_targets(targets: list[str] | None) -> list[str]:
     return targets or ["."]
 
 
+def _result_status(
+    returncode: int,
+    findings: list[Finding],
+) -> Literal["PASS", "FINDINGS", "CONFIG_ERROR"]:
+    if returncode == 0:
+        return "PASS"
+    if findings:
+        return "FINDINGS"
+    return "CONFIG_ERROR"
+
+
 def _evidence_path(root: Path, raw: str) -> str:
     if not raw:
         return ""
@@ -138,7 +150,7 @@ def run_flake8(
         return p
     if p is None:
         return ToolResult(tool="flake8", status="TOOL_UNAVAILABLE")
-    finds = []
+    finds: list[Finding] = []
     rx = re.compile(
         r"^(.*?):(\d+):(\d+):\s+([A-Z]\d+)\s+(.*)$"
     )
@@ -155,14 +167,9 @@ def run_flake8(
                     message=m[5],
                 )
             )
-    status = (
-        "PASS"
-        if p.returncode == 0
-        else ("FINDINGS" if finds else "CONFIG_ERROR")
-    )
     return ToolResult(
         tool="flake8",
-        status=status,
+        status=_result_status(p.returncode, finds),
         exit_code=p.returncode,
         version=_version(["flake8", "--version"]),
         findings=finds,
@@ -192,7 +199,7 @@ def run_ruff(
         return p
     if p is None:
         return ToolResult(tool="ruff", status="TOOL_UNAVAILABLE")
-    finds = []
+    finds: list[Finding] = []
     try:
         data = json.loads(p.stdout or "[]")
         for item in data:
@@ -212,14 +219,9 @@ def run_ruff(
             )
     except Exception:
         data = []
-    status = (
-        "PASS"
-        if p.returncode == 0
-        else ("FINDINGS" if finds else "CONFIG_ERROR")
-    )
     return ToolResult(
         tool="ruff",
-        status=status,
+        status=_result_status(p.returncode, finds),
         exit_code=p.returncode,
         version=_version(["ruff", "--version"]),
         findings=finds,
@@ -249,7 +251,7 @@ def run_mypy(
         return p
     if p is None:
         return ToolResult(tool="mypy", status="TOOL_UNAVAILABLE")
-    finds = []
+    finds: list[Finding] = []
     rx = re.compile(
         r"^(.*?):(\d+):(\d+):\s+error:\s+(.*?)\s+\[([^\]]+)\]$"
     )
@@ -266,14 +268,9 @@ def run_mypy(
                     message=m[4],
                 )
             )
-    status = (
-        "PASS"
-        if p.returncode == 0
-        else ("FINDINGS" if finds else "CONFIG_ERROR")
-    )
     return ToolResult(
         tool="mypy",
-        status=status,
+        status=_result_status(p.returncode, finds),
         exit_code=p.returncode,
         version=_version(["mypy", "--version"]),
         findings=finds,
@@ -297,7 +294,7 @@ def run_bandit(
         return p
     if p is None:
         return ToolResult(tool="bandit", status="TOOL_UNAVAILABLE")
-    finds = []
+    finds: list[Finding] = []
     try:
         data = json.loads(p.stdout or "{}")
         for item in data.get("results", []):
@@ -318,14 +315,9 @@ def run_bandit(
             )
     except Exception:
         data = {}
-    status = (
-        "PASS"
-        if p.returncode == 0
-        else ("FINDINGS" if finds else "CONFIG_ERROR")
-    )
     return ToolResult(
         tool="bandit",
-        status=status,
+        status=_result_status(p.returncode, finds),
         exit_code=p.returncode,
         version=_version(["bandit", "--version"]),
         findings=finds,
