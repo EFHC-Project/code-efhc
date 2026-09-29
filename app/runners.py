@@ -121,6 +121,15 @@ def _result_status(
     return "CONFIG_ERROR"
 
 
+def _normalized_exit_code(
+    status: Literal["PASS", "FINDINGS", "CONFIG_ERROR"],
+    raw_exit_code: int,
+) -> int:
+    if status == "PASS":
+        return 0
+    return raw_exit_code
+
+
 def _evidence_path(root: Path, raw: str) -> str:
     if not raw:
         return ""
@@ -170,10 +179,12 @@ def run_flake8(
                     message=m[5],
                 )
             )
+    status = _result_status(p.returncode, finds)
     return ToolResult(
         tool="flake8",
-        status=_result_status(p.returncode, finds),
-        exit_code=p.returncode,
+        status=status,
+        exit_code=_normalized_exit_code(status, p.returncode),
+        raw_exit_code=p.returncode,
         version=_version(["flake8", "--version"]),
         findings=finds,
         stderr=p.stderr[-4000:],
@@ -233,10 +244,12 @@ def run_ruff(
             "Suppressed Ruff EXE001 where executable-mode provenance "
             "was unavailable."
         )
+    status = _result_status(p.returncode, finds, suppressed)
     return ToolResult(
         tool="ruff",
-        status=_result_status(p.returncode, finds, suppressed),
-        exit_code=p.returncode,
+        status=status,
+        exit_code=_normalized_exit_code(status, p.returncode),
+        raw_exit_code=p.returncode,
         version=_version(["ruff", "--version"]),
         findings=finds,
         suppressed_findings=suppressed,
@@ -286,10 +299,12 @@ def run_mypy(
                     message=m[4],
                 )
             )
+    status = _result_status(p.returncode, finds)
     return ToolResult(
         tool="mypy",
-        status=_result_status(p.returncode, finds),
-        exit_code=p.returncode,
+        status=status,
+        exit_code=_normalized_exit_code(status, p.returncode),
+        raw_exit_code=p.returncode,
         version=_version(["mypy", "--version"]),
         findings=finds,
         stderr=p.stderr[-4000:],
@@ -335,10 +350,12 @@ def run_bandit(
             )
     except Exception:
         data = {}
+    status = _result_status(p.returncode, finds)
     return ToolResult(
         tool="bandit",
-        status=_result_status(p.returncode, finds),
-        exit_code=p.returncode,
+        status=status,
+        exit_code=_normalized_exit_code(status, p.returncode),
+        raw_exit_code=p.returncode,
         version=_version(["bandit", "--version"]),
         findings=finds,
         stderr=p.stderr[-4000:],
