@@ -549,13 +549,13 @@ def main() -> int:
             }
         ],
         ["ruff"],
-        10,
+        11,
         targets=["missing.py"],
     )
     expect_error(missing_target)
     cases.append(
         (
-            "E2E-011",
+            "E2E-012",
             "PASS missing Python target rejected",
         )
     )
@@ -572,13 +572,13 @@ def main() -> int:
             },
         ],
         ["ruff"],
-        11,
+        12,
         targets=["pyproject.toml"],
     )
     expect_error(non_python_target)
     cases.append(
         (
-            "E2E-012",
+            "E2E-013",
             "PASS config cannot become Python scanner target",
         )
     )
@@ -600,12 +600,12 @@ def main() -> int:
             ],
             "dependency_authorized": False,
         },
-        12,
+        13,
     )
     expect_error(deps)
     cases.append(
         (
-            "E2E-013",
+            "E2E-014",
             "PASS dependency bootstrap authorization gate",
         )
     )
@@ -619,7 +619,7 @@ def main() -> int:
             "tools": ["ruff"],
             "dependency_mode": "none",
         },
-        13,
+        14,
     )
     expect_error(moving)
     cases.append(
@@ -639,7 +639,7 @@ def main() -> int:
                 "tools": ["ruff"],
                 "dependency_mode": "none",
             },
-            15,
+            16,
         )
     )
     assert github["intake"]["source_commit"] == (  # nosec B101
