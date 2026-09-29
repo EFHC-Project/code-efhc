@@ -1,4 +1,5 @@
-# Cycle 0021 remote E2E harness.\nfrom __future__ import annotations
+# Cycle 0021 remote E2E harness.
+from __future__ import annotations
 
 import json
 import os
@@ -52,8 +53,8 @@ def main() -> int:
 
     health = request_json(BASE.rstrip("/") + "/health")
     assert health["status"] == "ok", health
-    assert health["runtime"] == "0.2.0", health
-    cases.append(("E2E-001", "PASS health runtime 0.2.0"))
+    assert health["runtime"] == "0.2.2", health
+    cases.append(("E2E-001", "PASS health runtime 0.2.2"))
 
     tools = request_json(MCP, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     names = {x["name"] for x in tools["result"]["tools"]}
