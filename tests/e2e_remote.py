@@ -42,12 +42,12 @@ def call_tool(name: str, arguments: dict, call_id: int) -> dict:
 
 
 def tool_result(response: dict) -> dict:
-    assert "error" not in response, response
+    assert "error" not in response, response  # nosec B101
     return response["result"]["structuredContent"]
 
 
 def expect_error(response: dict, code: int = -32602) -> None:
-    assert response.get("error", {}).get("code") == code, response
+    assert response.get("error", {}).get("code") == code, response  # nosec B101
 
 
 def one_inline(
@@ -69,7 +69,7 @@ def main() -> int:
     cases: list[tuple[str, str]] = []
 
     health = request_json(BASE.rstrip("/") + "/health")
-    assert health == {"status": "ok", "runtime": "0.2.3"}, health
+    assert health == {"status": "ok", "runtime": "0.2.3"}, health  # nosec B101
     cases.append(("E2E-001", "PASS health/runtime identity"))
 
     listed = request_json(
@@ -86,11 +86,11 @@ def main() -> int:
         "run_python_quality_gate_inline",
         "compare_python_quality_gate",
     }
-    assert required <= set(tool_map), set(tool_map)
+    assert required <= set(tool_map), set(tool_map)  # nosec B101
     inline_schema = tool_map["run_python_quality_gate_inline"]["inputSchema"]
-    assert "targets" in inline_schema["properties"], inline_schema
-    assert "targets" in inline_schema["required"], inline_schema
-    assert (
+    assert "targets" in inline_schema["properties"], inline_schema  # nosec B101
+    assert "targets" in inline_schema["required"], inline_schema  # nosec B101
+    assert (  # nosec B101
         "mode"
         in inline_schema["properties"]["files"]["items"]["properties"]
     ), inline_schema
@@ -101,8 +101,8 @@ def main() -> int:
         "baseline_targets",
         "candidate_targets",
     ):
-        assert key in compare_schema["properties"], compare_schema
-        assert key in compare_schema["required"], compare_schema
+        assert key in compare_schema["properties"], compare_schema  # nosec B101
+        assert key in compare_schema["required"], compare_schema  # nosec B101
     cases.append(("E2E-002", "PASS published MCP schema contract"))
 
     clean = tool_result(
@@ -121,12 +121,12 @@ def main() -> int:
             targets=["a.py"],
         )
     )
-    assert clean["status"] == "PASS", clean
+    assert clean["status"] == "PASS", clean  # nosec B101
     per_tool = {
         item["tool"]: item["status"]
         for item in clean["results"]
     }
-    assert per_tool == {
+    assert per_tool == {  # nosec B101
         "flake8": "PASS",
         "ruff": "PASS",
         "mypy": "PASS",
@@ -145,13 +145,13 @@ def main() -> int:
             targets=["changed.py"],
         )
     )
-    assert scoped["status"] == "PASS", scoped
-    assert not scoped["findings"], scoped
+    assert scoped["status"] == "PASS", scoped  # nosec B101
+    assert not scoped["findings"], scoped  # nosec B101
     roles = {
         item["path"]: item["role"]
         for item in scoped["intake"]["files"]
     }
-    assert roles == {
+    assert roles == {  # nosec B101
         "changed.py": "target",
         "context.py": "context",
     }, roles
@@ -182,7 +182,7 @@ def main() -> int:
             targets=["pkg/changed.py"],
         )
     )
-    assert mypy_context["status"] == "PASS", mypy_context
+    assert mypy_context["status"] == "PASS", mypy_context  # nosec B101
     cases.append(("E2E-005", "PASS minimal mypy import context"))
 
     target_text = "x = 1\n"
@@ -204,14 +204,14 @@ def main() -> int:
         item["path"]: item
         for item in provenance["intake"]["files"]
     }
-    assert evidence["pkg/a.py"]["role"] == "target", evidence
-    assert evidence["pyproject.toml"]["role"] == "config", evidence
-    assert evidence["pkg/a.py"]["sha256"] == hashlib.sha256(
+    assert evidence["pkg/a.py"]["role"] == "target", evidence  # nosec B101
+    assert evidence["pyproject.toml"]["role"] == "config", evidence  # nosec B101
+    assert evidence["pkg/a.py"]["sha256"] == hashlib.sha256(  # nosec B101
         target_text.encode()
     ).hexdigest(), evidence
-    assert provenance["intake"]["config_identity"], provenance
-    assert provenance["runtime_version"] == "0.2.3", provenance
-    assert provenance["results"][0]["version"], provenance
+    assert provenance["intake"]["config_identity"], provenance  # nosec B101
+    assert provenance["runtime_version"] == "0.2.3", provenance  # nosec B101
+    assert provenance["results"][0]["version"], provenance  # nosec B101
     cases.append(("E2E-006", "PASS SHA/config/runtime provenance"))
 
     unknown_mode = tool_result(
@@ -227,9 +227,9 @@ def main() -> int:
             targets=["script.py"],
         )
     )
-    assert unknown_mode["status"] == "PASS", unknown_mode
-    assert unknown_mode["results"][0]["suppressed_findings"] >= 1, unknown_mode
-    assert not {
+    assert unknown_mode["status"] == "PASS", unknown_mode  # nosec B101
+    assert unknown_mode["results"][0]["suppressed_findings"] >= 1, unknown_mode  # nosec B101
+    assert not {  # nosec B101
         item["code"]
         for item in unknown_mode["findings"]
         if item["code"] == "EXE001"
@@ -250,8 +250,8 @@ def main() -> int:
             targets=["script.py"],
         )
     )
-    assert known_nonexec["status"] == "FAIL_FINDINGS", known_nonexec
-    assert "EXE001" in {
+    assert known_nonexec["status"] == "FAIL_FINDINGS", known_nonexec  # nosec B101
+    assert "EXE001" in {  # nosec B101
         item["code"]
         for item in known_nonexec["findings"]
     }, known_nonexec
@@ -265,8 +265,8 @@ def main() -> int:
             targets=["pkg/a.py"],
         )
     )
-    assert negative["status"] == "FAIL_FINDINGS", negative
-    assert {
+    assert negative["status"] == "FAIL_FINDINGS", negative  # nosec B101
+    assert {  # nosec B101
         item["path"]
         for item in negative["findings"]
     } == {"pkg/a.py"}, negative
@@ -296,15 +296,15 @@ def main() -> int:
             9,
         )
     )
-    assert compare["status"] == "FAIL_INTRODUCED", compare
-    assert compare["summary"] == {
+    assert compare["status"] == "FAIL_INTRODUCED", compare  # nosec B101
+    assert compare["summary"] == {  # nosec B101
         "baseline": 2,
         "candidate": 2,
         "introduced": 1,
         "resolved": 1,
         "pre_existing": 1,
     }, compare
-    assert compare["findings"] == [], compare
+    assert compare["findings"] == [], compare  # nosec B101
     cases.append(("E2E-010", "PASS compact native regression summary"))
 
     compare_details = tool_result(
@@ -332,7 +332,7 @@ def main() -> int:
             10,
         )
     )
-    assert {
+    assert {  # nosec B101
         item["classification"]
         for item in compare_details["findings"]
     } == {"INTRODUCED", "RESOLVED", "PRE_EXISTING"}, compare_details
@@ -373,7 +373,7 @@ def main() -> int:
             targets=["a.py"],
         )
     )
-    assert mypy_plugin["status"] == "FAIL_CONFIG", mypy_plugin
+    assert mypy_plugin["status"] == "FAIL_CONFIG", mypy_plugin  # nosec B101
     cases.append(("E2E-014", "PASS executable mypy plugin blocked"))
 
     deps = call_tool(
@@ -418,8 +418,8 @@ def main() -> int:
             16,
         )
     )
-    assert github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT, github
-    assert github["results"][0]["tool"] == "ruff", github
+    assert github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT, github  # nosec B101
+    assert github["results"][0]["tool"] == "ruff", github  # nosec B101
     cases.append(("E2E-017", "PASS exact GitHub commit route"))
 
     for case, result in cases:
