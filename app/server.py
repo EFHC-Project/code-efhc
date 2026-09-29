@@ -39,21 +39,21 @@ DEPENDENCY_PROPERTIES = {
 GUARDIAN_INSTRUCTIONS = (
     "CODE EFHC is a read-only Coding / Project Guardian verification layer. "
     "ChatGPT performs authorized code changes; CODE EFHC independently "
-    "verifies Python code. Work from the current explicit OWNER task, "
-    "physical project HEAD, active SSOT/CANON/NORM, project profile, "
-    "locks/freezes and anti-regression rules. ChatGPT Memory is navigation "
-    "only, never authority. Before substantive work, establish project "
-    "identity, exact HEAD and allowed scope. Use run_python_quality_gate for "
-    "uploaded files/archives, run_python_quality_gate_from_github only with "
-    "an exact 40-character public GitHub commit SHA, and "
-    "run_python_quality_gate_inline for small inline code. Never weaken "
-    "checks to obtain PASS. Never run auto-fix. Never enable isolated "
-    "dependencies without explicit user authorization for exact "
-    "name==version pins. For closure/reporting, distinguish VERIFIED, "
-    "CHANGED, TESTS/CI, BLOCKERS and NEXT STEP. Local checks are not remote "
-    "CI; never claim CI GREEN, persistence, release integrity or closure "
-    "without direct evidence. Preserve immutable history and never "
-    "auto-start the next cycle."
+    "verifies selected Python code. Work from the current explicit OWNER "
+    "task, physical project HEAD, active SSOT/CANON/NORM, project profile "
+    "and locks/freezes. ChatGPT Memory is navigation only, never authority. "
+    "For routine work, prefer run_python_quality_gate_inline with only the "
+    "changed Python files and/or a small task-relevant suspicious Python "
+    "selection. Add only the minimal local Python/import/config context "
+    "needed for correct analysis, and set targets to the files that should "
+    "actually be scanned. Do not send a full project archive by default. "
+    "run_python_quality_gate remains a fallback for explicit uploaded "
+    "Python/config files or a manual archive audit. "
+    "run_python_quality_gate_from_github requires an exact 40-character "
+    "public GitHub commit SHA. Never weaken checks to obtain PASS. Never "
+    "run auto-fix. Never enable isolated dependencies without explicit "
+    "user authorization for exact name==version pins. Local/runtime checks "
+    "are not remote CI; never claim CI GREEN without direct evidence."
 )
 
 
@@ -62,7 +62,7 @@ def _tool_descriptors():
         {
             "name": "run_python_quality_gate",
             "title": "Check uploaded Python project files",
-            "description": "Run read-only Flake8, Ruff, mypy and Bandit on uploaded Python files or ZIP/TAR archives. Archives are safely extracted into an ephemeral workspace. Isolated dependency bootstrap is available only with explicit authorization and exact name==version pins.",
+            "description": "Fallback/manual route for explicit uploaded Python/config files or ZIP/TAR archive audits. Routine verification should use the targeted inline route instead of sending an entire project archive. Archives are safely extracted into an ephemeral workspace. Isolated dependency bootstrap is available only with explicit authorization and exact name==version pins.",
             "inputSchema": {
                 "type": "object",
                 "$defs": {"OpenAIFile": OPENAI_FILE_SCHEMA},
@@ -98,8 +98,8 @@ def _tool_descriptors():
         },
         {
             "name": "run_python_quality_gate_inline",
-            "title": "Check inline Python files",
-            "description": "Run the same read-only quality gate on small inline text files. Use the uploaded-file tool for user files and archives.",
+            "title": "Check selected Python targets",
+            "description": "Preferred route for routine verification. Send only changed and/or task-relevant suspicious Python files plus minimal local Python/import/config context. Use targets to identify the files Flake8, Ruff, mypy and Bandit should actually scan; context files remain available for import/type resolution.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -107,6 +107,11 @@ def _tool_descriptors():
                         "type": "array",
                         "items": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": False},
                         "minItems": 1,
+                        "maxItems": 200,
+                    },
+                    "targets": {
+                        "type": "array",
+                        "items": {"type": "string"},
                         "maxItems": 200,
                     },
                     "tools": TOOLS_SCHEMA,
@@ -126,7 +131,10 @@ def health():
 
 
 def _execute(prepared: PreparedWorkspace, tools: list[str]) -> QualityGateResponse:
-    results = [RUNNERS[t](prepared.root, prepared.mypy_path) for t in tools]
+    results = [
+        RUNNERS[t](prepared.root, prepared.mypy_path, prepared.targets)
+        for t in tools
+    ]
     findings = [f for r in results for f in r.findings]
     statuses = {r.status for r in results}
     if "CONFIG_ERROR" in statuses:
@@ -145,7 +153,13 @@ def _execute(prepared: PreparedWorkspace, tools: list[str]) -> QualityGateRespon
 @app.post("/v1/quality-gate", response_model=QualityGateResponse)
 def quality_gate(req: CheckRequest):
     try:
-        with inline_workspace(req.files, req.dependency_mode, req.dependencies, req.dependency_authorized) as prepared:
+        with inline_workspace(
+            req.files,
+            req.dependency_mode,
+            req.dependencies,
+            req.dependency_authorized,
+            req.targets,
+        ) as prepared:
             return _execute(prepared, req.tools)
     except InputRejected as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -204,7 +218,13 @@ async def mcp(request: Request):
                 return _mcp_success(rid, _execute(prepared, req.tools))
         if name == "run_python_quality_gate_inline":
             req = CheckRequest.model_validate(args)
-            with inline_workspace(req.files, req.dependency_mode, req.dependencies, req.dependency_authorized) as prepared:
+            with inline_workspace(
+                req.files,
+                req.dependency_mode,
+                req.dependencies,
+                req.dependency_authorized,
+                req.targets,
+            ) as prepared:
                 return _mcp_success(rid, _execute(prepared, req.tools))
         return _mcp_error(rid, -32601, "Unknown tool")
     except (ValidationError, InputRejected) as exc:
