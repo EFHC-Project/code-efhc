@@ -155,13 +155,49 @@ def _extract_tar(data: bytes, destination: Path) -> tuple[int, int, int]:
     return count, relevant_total, skipped
 
 
-def _looks_like_zip(data: bytes, name: str | None) -> bool:
-    return data.startswith(b"PK\x03\x04") or bool(name and name.lower().endswith(".zip"))
+ARCHIVE_SUFFIXES = (
+    ".zip",
+    ".tar",
+    ".tar.gz",
+    ".tgz",
+    ".tar.bz2",
+    ".tbz",
+    ".tbz2",
+    ".tar.xz",
+    ".txz",
+)
+ARCHIVE_MIME_TYPES = {
+    "application/zip",
+    "application/x-zip-compressed",
+    "application/x-tar",
+    "application/gzip",
+    "application/x-gzip",
+    "application/x-bzip2",
+    "application/x-xz",
+}
 
 
-def _looks_like_tar(data: bytes, name: str | None) -> bool:
-    lower = (name or "").lower()
-    return lower.endswith((".tar.gz", ".tgz", ".tar")) or data.startswith(b"\x1f\x8b")
+def _looks_like_zip(data: bytes, name: str | None = None) -> bool:
+    del name
+    return zipfile.is_zipfile(io.BytesIO(data))
+
+
+def _looks_like_tar(data: bytes, name: str | None = None) -> bool:
+    del name
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*"):
+            return True
+    except (tarfile.TarError, OSError, EOFError):
+        return False
+
+
+def _has_archive_hint(name: str | None, mime_type: str | None) -> bool:
+    lower_name = (name or "").lower()
+    lower_mime = (mime_type or "").lower()
+    return (
+        lower_name.endswith(ARCHIVE_SUFFIXES)
+        or lower_mime in ARCHIVE_MIME_TYPES
+    )
 
 
 def _project_root(project_dir: Path) -> Path:
@@ -240,22 +276,58 @@ def uploaded_workspace(req: UploadedCheckRequest):
         count = total = skipped = 0
         identities: list[str] = []
         for index, file_ref in enumerate(req.files, start=1):
-            if not file_ref.file_id.startswith("file_"):
-                raise InputRejected("uploaded file reference must contain a host file_id")
+            identity = file_ref.file_id.strip()
+            if not identity:
+                raise InputRejected(
+                    "uploaded file reference requires a non-empty host id"
+                )
             data = _download_limited(file_ref.download_url)
-            name = file_ref.file_name or PurePosixPath(urlsplit(file_ref.download_url).path).name or f"input_{index}"
-            identities.append(file_ref.file_id)
-            if _looks_like_zip(data, name):
-                c, b, s = _extract_zip(data, project)
-            elif _looks_like_tar(data, name):
-                c, b, s = _extract_tar(data, project)
-            else:
-                if not file_ref.file_name and not (file_ref.mime_type and "python" in file_ref.mime_type.lower()):
-                    raise InputRejected("non-archive uploaded file requires file_name or Python mime type")
-                if not file_ref.file_name:
-                    name = f"input_{index}.py"
-                written, s = _write_relevant(project, validate_path(name), data)
-                c, b = (1 if written else 0), written
+            name = (
+                file_ref.file_name
+                or PurePosixPath(
+                    urlsplit(file_ref.download_url).path
+                ).name
+                or f"input_{index}"
+            )
+            identities.append(identity)
+            try:
+                if _looks_like_zip(data, name):
+                    c, b, s = _extract_zip(data, project)
+                elif _looks_like_tar(data, name):
+                    c, b, s = _extract_tar(data, project)
+                elif _has_archive_hint(name, file_ref.mime_type):
+                    raise InputRejected(
+                        "invalid or unsupported archive"
+                    )
+                else:
+                    if not file_ref.file_name and not (
+                        file_ref.mime_type
+                        and "python" in file_ref.mime_type.lower()
+                    ):
+                        raise InputRejected(
+                            "non-archive uploaded file requires "
+                            "file_name or Python mime type"
+                        )
+                    if not file_ref.file_name:
+                        name = f"input_{index}.py"
+                    written, s = _write_relevant(
+                        project,
+                        validate_path(name),
+                        data,
+                    )
+                    c, b = (1 if written else 0), written
+            except InputRejected:
+                raise
+            except (
+                zipfile.BadZipFile,
+                tarfile.TarError,
+                RuntimeError,
+                OSError,
+                EOFError,
+            ) as exc:
+                raise InputRejected(
+                    "invalid or unsupported archive"
+                ) from exc
             count += c
             total += b
             skipped += s
