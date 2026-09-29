@@ -37,6 +37,7 @@ class PreparedWorkspace:
     root: Path
     intake: IntakeReport
     mypy_path: str | None = None
+    targets: list[str] | None = None
 
 
 def _download_limited(url: str, allowed_hosts: set[str] | None = None) -> bytes:
@@ -243,10 +244,41 @@ def _prepare_dependencies(base: Path, mode: str, dependencies: list[str], author
     return str(target), pins
 
 
+def _select_inline_targets(
+    pairs: list[tuple[str, str]],
+    targets: list[str] | None,
+) -> list[str]:
+    available = {rel for rel, _ in pairs}
+    requested = targets or [
+        rel
+        for rel, _ in pairs
+        if PurePosixPath(rel).suffix.lower() in {".py", ".pyi"}
+    ]
+    selected: list[str] = []
+    for raw in requested:
+        rel = validate_path(raw)
+        if PurePosixPath(rel).suffix.lower() not in {".py", ".pyi"}:
+            raise InputRejected(f"quality-gate target is not Python: {rel}")
+        if rel not in available:
+            raise InputRejected(f"quality-gate target was not supplied: {rel}")
+        if rel not in selected:
+            selected.append(rel)
+    if not selected:
+        raise InputRejected("no Python targets selected")
+    return selected
+
+
 @contextmanager
-def inline_workspace(files: list[FileInput], mode: str = "none", dependencies: list[str] | None = None, authorized: bool = False):
+def inline_workspace(
+    files: list[FileInput],
+    mode: str = "none",
+    dependencies: list[str] | None = None,
+    authorized: bool = False,
+    targets: list[str] | None = None,
+):
     pairs = [(validate_path(f.path), f.content) for f in files]
     validate_total(pairs)
+    selected_targets = _select_inline_targets(pairs, targets)
     with tempfile.TemporaryDirectory(prefix="code-efhc-") as td:
         base = Path(td)
         project = base / "project"
@@ -264,6 +296,7 @@ def inline_workspace(files: list[FileInput], mode: str = "none", dependencies: l
             root=project,
             intake=IntakeReport(source_kind="inline", source_identity="inline", file_count=len(pairs), total_bytes=total, dependency_mode=mode, dependencies=pins),
             mypy_path=mypy_path,
+            targets=selected_targets,
         )
 
 
