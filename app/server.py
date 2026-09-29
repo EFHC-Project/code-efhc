@@ -4,7 +4,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
 from .intake import PreparedWorkspace, github_workspace, inline_workspace, uploaded_workspace
-from .models import CheckRequest, GitHubCheckRequest, QualityGateResponse, UploadedCheckRequest
+from .models import CheckRequest, GitHubCheckRequest, QualityGateResponse, ToolName, UploadedCheckRequest
 from .runners import RUNNERS
 from .security import InputRejected
 
@@ -130,7 +130,7 @@ def health():
     return {"status": "ok", "runtime": "0.2.2"}
 
 
-def _execute(prepared: PreparedWorkspace, tools: list[str]) -> QualityGateResponse:
+def _execute(prepared: PreparedWorkspace, tools: list[ToolName]) -> QualityGateResponse:
     results = [
         RUNNERS[t](prepared.root, prepared.mypy_path, prepared.targets)
         for t in tools
@@ -209,23 +209,32 @@ async def mcp(request: Request):
     args = params.get("arguments") or {}
     try:
         if name == "run_python_quality_gate":
-            req = UploadedCheckRequest.model_validate(args)
-            with uploaded_workspace(req) as prepared:
-                return _mcp_success(rid, _execute(prepared, req.tools))
+            uploaded_req = UploadedCheckRequest.model_validate(args)
+            with uploaded_workspace(uploaded_req) as prepared:
+                return _mcp_success(
+                    rid,
+                    _execute(prepared, uploaded_req.tools),
+                )
         if name == "run_python_quality_gate_from_github":
-            req = GitHubCheckRequest.model_validate(args)
-            with github_workspace(req) as prepared:
-                return _mcp_success(rid, _execute(prepared, req.tools))
+            github_req = GitHubCheckRequest.model_validate(args)
+            with github_workspace(github_req) as prepared:
+                return _mcp_success(
+                    rid,
+                    _execute(prepared, github_req.tools),
+                )
         if name == "run_python_quality_gate_inline":
-            req = CheckRequest.model_validate(args)
+            inline_req = CheckRequest.model_validate(args)
             with inline_workspace(
-                req.files,
-                req.dependency_mode,
-                req.dependencies,
-                req.dependency_authorized,
-                req.targets,
+                inline_req.files,
+                inline_req.dependency_mode,
+                inline_req.dependencies,
+                inline_req.dependency_authorized,
+                inline_req.targets,
             ) as prepared:
-                return _mcp_success(rid, _execute(prepared, req.tools))
+                return _mcp_success(
+                    rid,
+                    _execute(prepared, inline_req.tools),
+                )
         return _mcp_error(rid, -32601, "Unknown tool")
     except (ValidationError, InputRejected) as exc:
         return _mcp_error(rid, -32602, str(exc)[:2000])
