@@ -8,7 +8,7 @@ from .models import CheckRequest, GitHubCheckRequest, QualityGateResponse, Uploa
 from .runners import RUNNERS
 from .security import InputRejected
 
-app = FastAPI(title="CODE EFHC Quality Gate Runtime", version="0.2.0")
+app = FastAPI(title="CODE EFHC Runtime", version="0.2.1")
 
 OPENAI_FILE_SCHEMA = {
     "type": "object",
@@ -94,7 +94,7 @@ def _tool_descriptors():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "runtime": "0.2.0"}
+    return {"status": "ok", "runtime": "0.2.1"}
 
 
 def _execute(prepared: PreparedWorkspace, tools: list[str]) -> QualityGateResponse:
@@ -153,7 +153,7 @@ async def mcp(request: Request):
         result = {
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "code-efhc-quality-gate", "version": "0.2.0"},
+            "serverInfo": {"name": "code-efhc", "version": "0.2.1"},
             "instructions": "Use run_python_quality_gate for uploaded files/archives, run_python_quality_gate_from_github only with an exact public GitHub commit SHA, and run_python_quality_gate_inline for small inline code. Never enable isolated dependencies without explicit user authorization for the exact pins.",
         }
         return {"jsonrpc": "2.0", "id": rid, "result": result}
