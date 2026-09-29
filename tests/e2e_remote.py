@@ -18,7 +18,11 @@ EXACT_GITHUB_COMMIT = "7c727a07da2b18aff09bcb3a6bc0c07143654c6c"
 
 def request_json(url: str, payload: dict | None = None) -> dict:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    headers = (
+        {"Content-Type": "application/json"}
+        if payload is not None
+        else {}
+    )
     req = urllib.request.Request(url, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as response:
@@ -47,7 +51,9 @@ def tool_result(response: dict) -> dict:
 
 
 def expect_error(response: dict, code: int = -32602) -> None:
-    assert response.get("error", {}).get("code") == code, response  # nosec B101
+    assert (  # nosec B101
+        response.get("error", {}).get("code") == code
+    ), response
 
 
 def one_inline(
@@ -88,7 +94,9 @@ def main() -> int:
     }
     assert required <= set(tool_map), set(tool_map)  # nosec B101
     inline_schema = tool_map["run_python_quality_gate_inline"]["inputSchema"]
-    assert "targets" in inline_schema["properties"], inline_schema  # nosec B101
+    assert (  # nosec B101
+        "targets" in inline_schema["properties"]
+    ), inline_schema
     assert "targets" in inline_schema["required"], inline_schema  # nosec B101
     assert (  # nosec B101
         "mode"
@@ -101,7 +109,9 @@ def main() -> int:
         "baseline_targets",
         "candidate_targets",
     ):
-        assert key in compare_schema["properties"], compare_schema  # nosec B101
+        assert (  # nosec B101
+            key in compare_schema["properties"]
+        ), compare_schema
         assert key in compare_schema["required"], compare_schema  # nosec B101
     cases.append(("E2E-002", "PASS published MCP schema contract"))
 
@@ -205,7 +215,9 @@ def main() -> int:
         for item in provenance["intake"]["files"]
     }
     assert evidence["pkg/a.py"]["role"] == "target", evidence  # nosec B101
-    assert evidence["pyproject.toml"]["role"] == "config", evidence  # nosec B101
+    assert (  # nosec B101
+        evidence["pyproject.toml"]["role"] == "config"
+    ), evidence
     assert evidence["pkg/a.py"]["sha256"] == hashlib.sha256(  # nosec B101
         target_text.encode()
     ).hexdigest(), evidence
@@ -228,7 +240,9 @@ def main() -> int:
         )
     )
     assert unknown_mode["status"] == "PASS", unknown_mode  # nosec B101
-    assert unknown_mode["results"][0]["suppressed_findings"] >= 1, unknown_mode  # nosec B101
+    assert (  # nosec B101
+        unknown_mode["results"][0]["suppressed_findings"] >= 1
+    ), unknown_mode
     assert not {  # nosec B101
         item["code"]
         for item in unknown_mode["findings"]
@@ -250,7 +264,9 @@ def main() -> int:
             targets=["script.py"],
         )
     )
-    assert known_nonexec["status"] == "FAIL_FINDINGS", known_nonexec  # nosec B101
+    assert (  # nosec B101
+        known_nonexec["status"] == "FAIL_FINDINGS"
+    ), known_nonexec
     assert "EXE001" in {  # nosec B101
         item["code"]
         for item in known_nonexec["findings"]
@@ -418,7 +434,9 @@ def main() -> int:
             16,
         )
     )
-    assert github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT, github  # nosec B101
+    assert (  # nosec B101
+        github["intake"]["source_commit"] == EXACT_GITHUB_COMMIT
+    ), github
     assert github["results"][0]["tool"] == "ruff", github  # nosec B101
     cases.append(("E2E-017", "PASS exact GitHub commit route"))
 
