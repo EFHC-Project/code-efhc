@@ -20,9 +20,7 @@ RUN npm install \
     --no-audit \
     --no-fund \
     typescript@6.0.3 \
-    eslint@10.11.0 \
-    @typescript-eslint/parser@8.70.1 \
-    @typescript-eslint/eslint-plugin@8.70.1
+    eslint@10.11.0
 RUN useradd --create-home --uid 10001 appuser
 WORKDIR /app
 COPY requirements.txt .
