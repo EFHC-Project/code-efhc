@@ -189,3 +189,71 @@ class CompareQualityGateResponse(BaseModel):
     baseline: GateEvidence
     candidate: GateEvidence
     findings: list[RegressionFinding] = Field(default_factory=list)
+
+
+FrontendToolName = Literal["typescript", "eslint", "node-check"]
+
+
+def _default_frontend_tools() -> list[FrontendToolName]:
+    return ["typescript", "eslint", "node-check"]
+
+
+class FrontendCheckRequest(BaseModel):
+    files: list[FileInput] = Field(min_length=1, max_length=200)
+    targets: list[str] = Field(min_length=1, max_length=200)
+    tools: list[FrontendToolName] = Field(
+        default_factory=_default_frontend_tools,
+        min_length=1,
+        max_length=3,
+    )
+
+
+class FrontendFinding(BaseModel):
+    tool: FrontendToolName
+    code: str | None = None
+    path: str
+    line: int | None = None
+    column: int | None = None
+    message: str
+    severity: str | None = None
+
+
+class FrontendToolResult(BaseModel):
+    tool: FrontendToolName
+    status: Literal[
+        "PASS",
+        "FINDINGS",
+        "CONFIG_ERROR",
+        "TOOL_UNAVAILABLE",
+        "NOT_APPLICABLE",
+    ]
+    exit_code: int | None = None
+    raw_exit_code: int | None = None
+    version: str | None = None
+    findings: list[FrontendFinding] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    stderr: str = ""
+
+
+class FrontendIntakeReport(BaseModel):
+    source_kind: Literal["inline"]
+    source_identity: str
+    file_count: int = 0
+    total_bytes: int = 0
+    targets: list[str] = Field(default_factory=list)
+    config_identity: str | None = None
+    files: list[FileEvidence] = Field(default_factory=list)
+
+
+class FrontendQualityGateResponse(BaseModel):
+    status: Literal[
+        "PASS",
+        "FAIL_FINDINGS",
+        "FAIL_CONFIG",
+        "PARTIAL",
+    ]
+    runtime_version: str
+    runtime_commit: str | None = None
+    results: list[FrontendToolResult]
+    findings: list[FrontendFinding]
+    intake: FrontendIntakeReport
