@@ -23,12 +23,65 @@ class ApiTests(unittest.TestCase):
         file_def = tools["run_python_quality_gate"]["inputSchema"]["$defs"]["OpenAIFile"]
         self.assertEqual(file_def["required"], ["download_url", "file_id"])
         self.assertEqual(set(file_def["properties"]), {"download_url", "file_id", "mime_type", "file_name"})
+        inline_schema = tools["run_python_quality_gate_inline"]["inputSchema"]["properties"]
+        self.assertIn("targets", inline_schema)
 
     def test_quality_gate_contract(self):
         r = self.c.post("/v1/quality-gate", json={"files": [{"path": "a.py", "content": "x=1\n"}], "tools": ["ruff"]})
         self.assertEqual(r.status_code, 200)
         self.assertEqual(len(r.json()["results"]), 1)
         self.assertEqual(r.json()["intake"]["source_kind"], "inline")
+
+    def test_inline_targets_limit_checker_scope(self):
+        r = self.c.post("/v1/quality-gate", json={
+            "files": [
+                {"path": "changed.py", "content": "x = 1\n"},
+                {"path": "context.py", "content": "import os\n"},
+            ],
+            "targets": ["changed.py"],
+            "tools": ["flake8", "ruff", "bandit"],
+        })
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "PASS")
+        self.assertEqual(
+            {x["tool"]: x["status"] for x in body["results"]},
+            {"flake8": "PASS", "ruff": "PASS", "bandit": "PASS"},
+        )
+
+    def test_inline_mypy_uses_minimal_context(self):
+        r = self.c.post("/v1/quality-gate", json={
+            "files": [
+                {"path": "pkg/__init__.py", "content": ""},
+                {
+                    "path": "pkg/helper.py",
+                    "content": "def twice(value: int) -> int:\n    return value * 2\n",
+                },
+                {
+                    "path": "pkg/changed.py",
+                    "content": (
+                        "from pkg.helper import twice\n\n"
+                        "def result(value: int) -> int:\n"
+                        "    return twice(value)\n"
+                    ),
+                },
+            ],
+            "targets": ["pkg/changed.py"],
+            "tools": ["mypy"],
+        })
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "PASS")
+        self.assertEqual(body["results"][0]["status"], "PASS")
+
+    def test_inline_rejects_target_not_supplied(self):
+        r = self.c.post("/v1/quality-gate", json={
+            "files": [{"path": "changed.py", "content": "x = 1\n"}],
+            "targets": ["missing.py"],
+            "tools": ["ruff"],
+        })
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("quality-gate target was not supplied", r.json()["detail"])
 
     def test_mcp_rejects_isolated_deps_without_authorization(self):
         r = self.c.post("/mcp", json={
