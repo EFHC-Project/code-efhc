@@ -13,7 +13,7 @@ class ApiTests(unittest.TestCase):
     def test_health(self):
         body = self.c.get("/health").json()
         self.assertEqual(body["status"], "ok")
-        self.assertEqual(body["runtime"], "0.2.3")
+        self.assertEqual(body["runtime"], "0.2.4")
 
     def test_mcp_schema_matches_targeted_contract(self):
         r = self.c.post(
@@ -41,6 +41,10 @@ class ApiTests(unittest.TestCase):
         inline = tools["run_python_quality_gate_inline"]["inputSchema"]
         self.assertIn("targets", inline["properties"])
         self.assertIn("targets", inline["required"])
+        self.assertEqual(
+            inline["properties"]["targets"]["minItems"],
+            1,
+        )
         inline_file = inline["properties"]["files"]["items"]
         self.assertIn("mode", inline_file["properties"])
 
@@ -53,6 +57,14 @@ class ApiTests(unittest.TestCase):
         ):
             self.assertIn(key, compare["properties"])
             self.assertIn(key, compare["required"])
+        self.assertEqual(
+            compare["properties"]["baseline_targets"]["minItems"],
+            1,
+        )
+        self.assertEqual(
+            compare["properties"]["candidate_targets"]["minItems"],
+            1,
+        )
 
     def test_target_context_config_provenance(self):
         target = "x = 1\n"
@@ -77,7 +89,7 @@ class ApiTests(unittest.TestCase):
         )
         self.assertEqual(r.status_code, 200)
         body = r.json()
-        self.assertEqual(body["runtime_version"], "0.2.3")
+        self.assertEqual(body["runtime_version"], "0.2.4")
         self.assertEqual(body["intake"]["targets"], ["pkg/a.py"])
         evidence = {
             item["path"]: item
@@ -153,6 +165,21 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["status"], "PASS")
         self.assertEqual(body["results"][0]["status"], "PASS")
 
+    def test_inline_requires_targets_fail_closed(self):
+        r = self.c.post(
+            "/v1/quality-gate",
+            json={
+                "files": [
+                    {
+                        "path": "changed.py",
+                        "content": "x = 1\n",
+                    }
+                ],
+                "tools": ["ruff"],
+            },
+        )
+        self.assertEqual(r.status_code, 422)
+
     def test_inline_rejects_target_not_supplied(self):
         r = self.c.post(
             "/v1/quality-gate",
@@ -211,6 +238,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["status"], "PASS")
         result = body["results"][0]
         self.assertGreaterEqual(result["suppressed_findings"], 1)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["raw_exit_code"], 1)
         self.assertNotIn(
             "EXE001",
             {item["code"] for item in body["findings"]},
@@ -239,6 +268,9 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         body = r.json()
         self.assertEqual(body["status"], "FAIL_FINDINGS")
+        result = body["results"][0]
+        self.assertEqual(result["exit_code"], 1)
+        self.assertEqual(result["raw_exit_code"], 1)
         self.assertIn(
             "EXE001",
             {item["code"] for item in body["findings"]},
