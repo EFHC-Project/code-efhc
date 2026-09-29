@@ -307,7 +307,7 @@ def _rebase_paths(
     for raw in paths:
         parts = PurePosixPath(raw).parts
         if parts[: len(prefix)] == prefix:
-            rest = parts[len(prefix) :]
+            rest = parts[len(prefix):]
             if rest:
                 rebased.add(PurePosixPath(*rest).as_posix())
         else:
