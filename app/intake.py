@@ -48,6 +48,7 @@ class PreparedWorkspace:
     mypy_path: str | None = None
     targets: list[str] | None = None
     unknown_mode_paths: set[str] | None = None
+    mode_by_path: dict[str, int | None] | None = None
 
 
 CONFIG_NAMES = {
@@ -74,6 +75,49 @@ def _role_for_path(rel: str, targets: set[str]) -> FileRole:
     if rel in targets:
         return "target"
     return "context"
+
+
+def _workspace_targets(root: Path) -> list[str]:
+    targets = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in {".py", ".pyi"}
+    )
+    if not targets:
+        raise InputRejected("no Python targets found")
+    return targets
+
+
+def _workspace_evidence(
+    root: Path,
+    targets: list[str],
+    mode_by_path: dict[str, int | None] | None = None,
+) -> list[FileEvidence]:
+    target_set = set(targets)
+    modes = mode_by_path or {}
+    evidence: list[FileEvidence] = []
+    for path in sorted(
+        (item for item in root.rglob("*") if item.is_file()),
+        key=lambda item: item.as_posix(),
+    ):
+        rel = path.relative_to(root).as_posix()
+        data = path.read_bytes()
+        known = rel in modes
+        evidence.append(
+            FileEvidence(
+                path=rel,
+                sha256=_sha256(data),
+                role=_role_for_path(rel, target_set),
+                mode=modes.get(rel),
+                mode_provenance=(
+                    "archive"
+                    if known and modes.get(rel) is not None
+                    else "unknown"
+                ),
+            )
+        )
+    return evidence
 
 
 def _config_identity(files: list[FileEvidence]) -> str | None:
@@ -153,9 +197,9 @@ def _write_relevant(
 def _extract_zip(
     data: bytes,
     destination: Path,
-) -> tuple[int, int, int, set[str]]:
+) -> tuple[int, int, int, dict[str, int | None]]:
     count = relevant_total = skipped = archive_total = 0
-    unknown_mode_paths: set[str] = set()
+    mode_by_path: dict[str, int | None] = {}
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         infos = zf.infolist()
         if len(infos) > MAX_ARCHIVE_ENTRIES:
@@ -191,17 +235,17 @@ def _extract_zip(
             if written:
                 count += 1
                 relevant_total += written
-                if mode is None:
-                    unknown_mode_paths.add(rel)
+                mode_by_path[rel] = mode
             skipped += was_skipped
-    return count, relevant_total, skipped, unknown_mode_paths
+    return count, relevant_total, skipped, mode_by_path
 
 
 def _extract_tar(
     data: bytes,
     destination: Path,
-) -> tuple[int, int, int, set[str]]:
+) -> tuple[int, int, int, dict[str, int | None]]:
     count = relevant_total = skipped = archive_total = 0
+    mode_by_path: dict[str, int | None] = {}
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
         members = tf.getmembers()
         if len(members) > MAX_ARCHIVE_ENTRIES:
@@ -235,8 +279,9 @@ def _extract_tar(
             if written:
                 count += 1
                 relevant_total += written
+                mode_by_path[rel] = member.mode & 0o777
             skipped += was_skipped
-    return count, relevant_total, skipped, set()
+    return count, relevant_total, skipped, mode_by_path
 
 
 ARCHIVE_SUFFIXES = (
@@ -293,6 +338,26 @@ def _project_root(project_dir: Path) -> Path:
     if len(visible) == 1 and visible[0].is_dir():
         return visible[0]
     return project_dir
+
+
+def _rebase_mapping(
+    project_dir: Path,
+    root: Path,
+    values: dict[str, int | None],
+) -> dict[str, int | None]:
+    if root == project_dir:
+        return dict(values)
+    prefix = root.relative_to(project_dir).parts
+    rebased: dict[str, int | None] = {}
+    for raw, value in values.items():
+        parts = PurePosixPath(raw).parts
+        if parts[: len(prefix)] == prefix:
+            rest = parts[len(prefix):]
+            if rest:
+                rebased[PurePosixPath(*rest).as_posix()] = value
+        else:
+            rebased[PurePosixPath(raw).as_posix()] = value
+    return rebased
 
 
 def _rebase_paths(
@@ -393,7 +458,7 @@ def inline_workspace(
         project.mkdir()
         total = 0
         evidence: list[FileEvidence] = []
-        unknown_mode_paths: set[str] = set()
+        mode_by_path: dict[str, int | None] = {}
         by_path = {validate_path(f.path): f for f in files}
         for rel, content in pairs:
             source = by_path[rel]
@@ -440,6 +505,10 @@ def inline_workspace(
             mypy_path=mypy_path,
             targets=selected_targets,
             unknown_mode_paths=unknown_mode_paths,
+            mode_by_path={
+                item.path: item.mode
+                for item in evidence
+            },
         )
 
 
@@ -469,11 +538,11 @@ def uploaded_workspace(req: UploadedCheckRequest):
             identities.append(identity)
             try:
                 if _looks_like_zip(data, name):
-                    c, b, s, unknown = _extract_zip(data, project)
-                    unknown_mode_paths.update(unknown)
+                    c, b, s, modes = _extract_zip(data, project)
+                    mode_by_path.update(modes)
                 elif _looks_like_tar(data, name):
-                    c, b, s, unknown = _extract_tar(data, project)
-                    unknown_mode_paths.update(unknown)
+                    c, b, s, modes = _extract_tar(data, project)
+                    mode_by_path.update(modes)
                 elif _has_archive_hint(name, file_ref.mime_type):
                     raise InputRejected(
                         "invalid or unsupported archive"
@@ -496,7 +565,7 @@ def uploaded_workspace(req: UploadedCheckRequest):
                         data,
                     )
                     if written:
-                        unknown_mode_paths.add(rel_name)
+                        mode_by_path[rel_name] = None
                     c, b = (1 if written else 0), written
             except InputRejected:
                 raise
@@ -522,6 +591,17 @@ def uploaded_workspace(req: UploadedCheckRequest):
             req.dependency_authorized,
         )
         root = _project_root(project)
+        rebased_modes = _rebase_mapping(
+            project,
+            root,
+            mode_by_path,
+        )
+        selected_targets = _workspace_targets(root)
+        evidence = _workspace_evidence(
+            root,
+            selected_targets,
+            rebased_modes,
+        )
         yield PreparedWorkspace(
             root=root,
             intake=IntakeReport(
@@ -532,13 +612,18 @@ def uploaded_workspace(req: UploadedCheckRequest):
                 skipped_files=skipped,
                 dependency_mode=req.dependency_mode,
                 dependencies=pins,
+                targets=selected_targets,
+                config_identity=_config_identity(evidence),
+                files=evidence,
             ),
             mypy_path=mypy_path,
-            unknown_mode_paths=_rebase_paths(
-                project,
-                root,
-                unknown_mode_paths,
-            ),
+            targets=selected_targets,
+            unknown_mode_paths={
+                path
+                for path, mode in rebased_modes.items()
+                if mode is None
+            },
+            mode_by_path=rebased_modes,
         )
 
 
@@ -551,7 +636,7 @@ def github_workspace(req: GitHubCheckRequest):
         base = Path(td)
         project = base / "project"
         project.mkdir()
-        count, total, skipped, unknown_mode_paths = _extract_zip(
+        count, total, skipped, mode_by_path = _extract_zip(
             data,
             project,
         )
@@ -570,6 +655,17 @@ def github_workspace(req: GitHubCheckRequest):
             req.dependencies,
             req.dependency_authorized,
         )
+        rebased_modes = _rebase_mapping(
+            project,
+            root,
+            mode_by_path,
+        )
+        selected_targets = _workspace_targets(root)
+        evidence = _workspace_evidence(
+            root,
+            selected_targets,
+            rebased_modes,
+        )
         yield PreparedWorkspace(
             root=root,
             intake=IntakeReport(
@@ -581,11 +677,16 @@ def github_workspace(req: GitHubCheckRequest):
                 skipped_files=skipped,
                 dependency_mode=req.dependency_mode,
                 dependencies=pins,
+                targets=selected_targets,
+                config_identity=_config_identity(evidence),
+                files=evidence,
             ),
             mypy_path=mypy_path,
-            unknown_mode_paths=_rebase_paths(
-                project,
-                root,
-                unknown_mode_paths,
-            ),
+            targets=selected_targets,
+            unknown_mode_paths={
+                path
+                for path, mode in rebased_modes.items()
+                if mode is None
+            },
+            mode_by_path=rebased_modes,
         )
