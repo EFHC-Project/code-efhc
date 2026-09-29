@@ -52,15 +52,17 @@ class FrontendWorkspaceTests(unittest.TestCase):
                 content="{}\n",
             )
         ]
-        with self.assertRaisesRegex(
-            InputRejected,
-            "frontend target is not source code",
-        ):
-            with frontend_workspace(
+        with (
+            self.assertRaisesRegex(
+                InputRejected,
+                "frontend target is not source code",
+            ),
+            frontend_workspace(
                 files,
                 ["tsconfig.json"],
-            ):
-                pass
+            ),
+        ):
+            pass
 
     def test_rejects_unsupplied_target(self):
         files = [
@@ -69,15 +71,17 @@ class FrontendWorkspaceTests(unittest.TestCase):
                 content="export const x = 1;\n",
             )
         ]
-        with self.assertRaisesRegex(
-            InputRejected,
-            "frontend target was not supplied",
-        ):
-            with frontend_workspace(
+        with (
+            self.assertRaisesRegex(
+                InputRejected,
+                "frontend target was not supplied",
+            ),
+            frontend_workspace(
                 files,
                 ["src/changed.ts"],
-            ):
-                pass
+            ),
+        ):
+            pass
 
 
 if __name__ == "__main__":
