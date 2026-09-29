@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import os
 import stat
@@ -15,7 +16,13 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from .models import FileInput, GitHubCheckRequest, IntakeReport, UploadedCheckRequest
+from .models import (
+    FileEvidence,
+    FileInput,
+    GitHubCheckRequest,
+    IntakeReport,
+    UploadedCheckRequest,
+)
 from .security import (
     MAX_ARCHIVE_ENTRIES,
     MAX_DOWNLOAD_BYTES,
@@ -38,6 +45,50 @@ class PreparedWorkspace:
     intake: IntakeReport
     mypy_path: str | None = None
     targets: list[str] | None = None
+    unknown_mode_paths: set[str] | None = None
+
+
+CONFIG_NAMES = {
+    ".bandit",
+    ".flake8",
+    ".mypy.ini",
+    ".ruff.toml",
+    "mypy.ini",
+    "pyproject.toml",
+    "ruff.toml",
+    "setup.cfg",
+    "tox.ini",
+}
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _role_for_path(rel: str, targets: set[str]) -> str:
+    name = PurePosixPath(rel).name.lower()
+    if name in CONFIG_NAMES:
+        return "config"
+    if rel in targets:
+        return "target"
+    return "context"
+
+
+def _config_identity(files: list[FileEvidence]) -> str | None:
+    rows = [
+        f"{item.path}\0{item.sha256}"
+        for item in files
+        if item.role == "config"
+    ]
+    if not rows:
+        return None
+    return hashlib.sha256(
+        "\n".join(sorted(rows)).encode("utf-8")
+    ).hexdigest()
+
+
+def _readonly_mode(mode: int | None) -> int:
+    return 0o444 | ((mode or 0) & 0o111)
 
 
 def _download_limited(url: str, allowed_hosts: set[str] | None = None) -> bytes:
@@ -279,24 +330,60 @@ def inline_workspace(
     pairs = [(validate_path(f.path), f.content) for f in files]
     validate_total(pairs)
     selected_targets = _select_inline_targets(pairs, targets)
+    selected_set = set(selected_targets)
     with tempfile.TemporaryDirectory(prefix="code-efhc-") as td:
         base = Path(td)
         project = base / "project"
         project.mkdir()
         total = 0
+        evidence: list[FileEvidence] = []
+        unknown_mode_paths: set[str] = set()
+        by_path = {validate_path(f.path): f for f in files}
         for rel, content in pairs:
+            source = by_path[rel]
             data = content.encode("utf-8")
             dst = project / rel
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(data)
-            os.chmod(dst, 0o444)
+            os.chmod(dst, _readonly_mode(source.mode))
             total += len(data)
-        mypy_path, pins = _prepare_dependencies(base, mode, dependencies or [], authorized)
+            if source.mode is None:
+                unknown_mode_paths.add(rel)
+            evidence.append(
+                FileEvidence(
+                    path=rel,
+                    sha256=_sha256(data),
+                    role=_role_for_path(rel, selected_set),
+                    mode=source.mode,
+                    mode_provenance=(
+                        "supplied"
+                        if source.mode is not None
+                        else "unknown"
+                    ),
+                )
+            )
+        mypy_path, pins = _prepare_dependencies(
+            base,
+            mode,
+            dependencies or [],
+            authorized,
+        )
         yield PreparedWorkspace(
             root=project,
-            intake=IntakeReport(source_kind="inline", source_identity="inline", file_count=len(pairs), total_bytes=total, dependency_mode=mode, dependencies=pins),
+            intake=IntakeReport(
+                source_kind="inline",
+                source_identity="inline",
+                file_count=len(pairs),
+                total_bytes=total,
+                dependency_mode=mode,
+                dependencies=pins,
+                targets=selected_targets,
+                config_identity=_config_identity(evidence),
+                files=evidence,
+            ),
             mypy_path=mypy_path,
             targets=selected_targets,
+            unknown_mode_paths=unknown_mode_paths,
         )
 
 
