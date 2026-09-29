@@ -5,7 +5,7 @@ import json
 import os
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404
 import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -15,13 +15,21 @@ from typing import Literal
 from .models import (
     FileEvidence,
     FileInput,
+    FileRole,
     FrontendCheckRequest,
     FrontendFinding,
     FrontendIntakeReport,
-    FrontendToolName,
     FrontendToolResult,
 )
 from .security import InputRejected, is_blocked_path, validate_total
+
+FrontendStatus = Literal[
+    "PASS",
+    "FINDINGS",
+    "CONFIG_ERROR",
+    "TOOL_UNAVAILABLE",
+    "NOT_APPLICABLE",
+]
 
 FRONTEND_SUFFIXES = {
     ".cjs",
@@ -54,14 +62,14 @@ class FrontendWorkspace:
 def _frontend_path(path: str) -> str:
     if not isinstance(path, str) or not path.strip():
         raise InputRejected("empty frontend path")
-    p = PurePosixPath(path.replace("\\", "/"))
-    if p.is_absolute() or ".." in p.parts or not p.parts:
+    parsed = PurePosixPath(path.replace("\\", "/"))
+    if parsed.is_absolute() or ".." in parsed.parts or not parsed.parts:
         raise InputRejected(f"unsafe frontend path: {path}")
-    rel = p.as_posix()
+    rel = parsed.as_posix()
     if is_blocked_path(rel):
         raise InputRejected(f"blocked frontend path: {path}")
-    name = p.name.lower()
-    suffix = p.suffix.lower()
+    name = parsed.name.lower()
+    suffix = parsed.suffix.lower()
     if (
         suffix not in FRONTEND_SUFFIXES
         and name not in FRONTEND_CONFIG_NAMES
@@ -75,11 +83,13 @@ def _target_path(path: str) -> str:
     rel = _frontend_path(path)
     suffix = PurePosixPath(rel).suffix.lower()
     if suffix not in {".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"}:
-        raise InputRejected(f"frontend target is not source code: {rel}")
+        raise InputRejected(
+            f"frontend target is not source code: {rel}"
+        )
     return rel
 
 
-def _role(path: str, targets: set[str]) -> str:
+def _role(path: str, targets: set[str]) -> FileRole:
     name = PurePosixPath(path).name.lower()
     if name in FRONTEND_CONFIG_NAMES or name.startswith("tsconfig."):
         return "config"
@@ -109,26 +119,36 @@ def frontend_workspace(
     files: list[FileInput],
     targets: list[str],
 ):
-    pairs = [(_frontend_path(item.path), item.content) for item in files]
+    pairs = [
+        (_frontend_path(item.path), item.content)
+        for item in files
+    ]
     validate_total(pairs)
     available = {path for path, _ in pairs}
     selected: list[str] = []
     for raw in targets:
         rel = _target_path(raw)
         if rel not in available:
-            raise InputRejected(f"frontend target was not supplied: {rel}")
+            raise InputRejected(
+                f"frontend target was not supplied: {rel}"
+            )
         if rel not in selected:
             selected.append(rel)
     if not selected:
         raise InputRejected("no frontend targets selected")
     target_set = set(selected)
 
-    with tempfile.TemporaryDirectory(prefix="code-efhc-front-") as td:
+    with tempfile.TemporaryDirectory(
+        prefix="code-efhc-front-"
+    ) as td:
         root = Path(td) / "project"
         root.mkdir()
         evidence: list[FileEvidence] = []
         total = 0
-        by_path = {_frontend_path(item.path): item for item in files}
+        by_path = {
+            _frontend_path(item.path): item
+            for item in files
+        }
         for rel, text in pairs:
             source = by_path[rel]
             data = text.encode("utf-8")
@@ -182,7 +202,7 @@ def _offline_env() -> dict[str, str]:
 
 def _version(cmd: list[str]) -> str | None:
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603
             cmd,
             text=True,
             capture_output=True,
@@ -196,11 +216,22 @@ def _version(cmd: list[str]) -> str | None:
     return text.splitlines()[0][:200] if text else None
 
 
-def _run(cmd: list[str], root: Path) -> subprocess.CompletedProcess[str] | None:
+def _timeout_text(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _run(
+    cmd: list[str],
+    root: Path,
+) -> subprocess.CompletedProcess[str] | None:
     if not Path(cmd[0]).is_file() and shutil.which(cmd[0]) is None:
         return None
     try:
-        return subprocess.run(
+        return subprocess.run(  # nosec B603
             cmd,
             cwd=root,
             text=True,
@@ -213,19 +244,13 @@ def _run(cmd: list[str], root: Path) -> subprocess.CompletedProcess[str] | None:
         return subprocess.CompletedProcess(
             cmd,
             124,
-            exc.stdout or "",
-            exc.stderr or "timeout",
+            _timeout_text(exc.stdout),
+            _timeout_text(exc.stderr) or "timeout",
         )
 
 
 def _normalized_exit(
-    status: Literal[
-        "PASS",
-        "FINDINGS",
-        "CONFIG_ERROR",
-        "TOOL_UNAVAILABLE",
-        "NOT_APPLICABLE",
-    ],
+    status: FrontendStatus,
     raw: int | None,
 ) -> int | None:
     if status in {"PASS", "NOT_APPLICABLE"}:
@@ -288,16 +313,20 @@ def run_typescript(
             status="TOOL_UNAVAILABLE",
         )
     findings: list[FrontendFinding] = []
-    rx = re.compile(
+    pattern = re.compile(
         r"^(.*)\((\d+),(\d+)\): error (TS\d+): (.*)$"
     )
     for line in proc.stdout.splitlines():
-        match = rx.match(line)
+        match = pattern.match(line)
         if not match:
             continue
         path = Path(match[1])
         try:
-            rel = path.resolve().relative_to(root.resolve()).as_posix()
+            rel = (
+                path.resolve()
+                .relative_to(root.resolve())
+                .as_posix()
+            )
         except (OSError, ValueError):
             rel = path.as_posix()
         findings.append(
@@ -310,6 +339,7 @@ def run_typescript(
                 message=match[5],
             )
         )
+    status: FrontendStatus
     if findings:
         status = "FINDINGS"
     elif proc.returncode == 0:
@@ -357,7 +387,11 @@ def run_eslint(
         raw_path = file_result.get("filePath", "")
         path = Path(raw_path)
         try:
-            rel = path.resolve().relative_to(root.resolve()).as_posix()
+            rel = (
+                path.resolve()
+                .relative_to(root.resolve())
+                .as_posix()
+            )
         except (OSError, ValueError):
             rel = path.as_posix()
         for item in file_result.get("messages", []):
@@ -372,6 +406,7 @@ def run_eslint(
                     severity=str(item.get("severity", "")),
                 )
             )
+    status: FrontendStatus
     if findings:
         status = "FINDINGS"
     elif proc.returncode == 0:
@@ -386,8 +421,10 @@ def run_eslint(
         version=_version([ESLINT, "--version"]),
         findings=findings,
         notes=[
-            "Uses CODE EFHC trusted ESLint configuration; "
-            "project executable ESLint config is not loaded."
+            (
+                "Uses CODE EFHC trusted ESLint configuration; "
+                "project executable ESLint config is not loaded."
+            )
         ],
         stderr=proc.stderr[-4000:],
     )
@@ -400,7 +437,8 @@ def run_node_check(
     applicable = [
         item
         for item in targets
-        if PurePosixPath(item).suffix.lower() in {".cjs", ".js", ".mjs"}
+        if PurePosixPath(item).suffix.lower()
+        in {".cjs", ".js", ".mjs"}
     ]
     if not applicable:
         return FrontendToolResult(
@@ -426,12 +464,18 @@ def run_node_check(
                     tool="node-check",
                     path=rel,
                     code="NODE_SYNTAX",
-                    message=(proc.stderr or proc.stdout).strip()[:1000],
+                    message=(
+                        proc.stderr or proc.stdout
+                    ).strip()[:1000],
                 )
             )
         if proc.stderr:
             stderr_parts.append(proc.stderr)
-    status = "FINDINGS" if findings else "PASS"
+    status: FrontendStatus = (
+        "FINDINGS"
+        if findings
+        else "PASS"
+    )
     return FrontendToolResult(
         tool="node-check",
         status=status,
@@ -455,7 +499,10 @@ def execute_frontend_gate(
 ) -> tuple[FrontendWorkspace, list[FrontendToolResult]]:
     with frontend_workspace(req.files, req.targets) as prepared:
         results = [
-            FRONTEND_RUNNERS[tool](prepared.root, prepared.targets)
+            FRONTEND_RUNNERS[tool](
+                prepared.root,
+                prepared.targets,
+            )
             for tool in req.tools
         ]
         return prepared, results
