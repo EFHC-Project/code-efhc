@@ -33,6 +33,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("run_python_quality_gate_from_github", tools)
         self.assertIn("run_python_quality_gate_inline", tools)
         self.assertIn("compare_python_quality_gate", tools)
+        self.assertIn("run_frontend_quality_gate_inline", tools)
         self.assertEqual(
             tools["run_python_quality_gate"]["_meta"]["openai/fileParams"],
             ["files"],
@@ -47,6 +48,16 @@ class ApiTests(unittest.TestCase):
         )
         inline_file = inline["properties"]["files"]["items"]
         self.assertIn("mode", inline_file["properties"])
+
+        frontend = tools["run_frontend_quality_gate_inline"][
+            "inputSchema"
+        ]
+        self.assertIn("targets", frontend["properties"])
+        self.assertIn("targets", frontend["required"])
+        self.assertEqual(
+            frontend["properties"]["targets"]["minItems"],
+            1,
+        )
 
         compare = tools["compare_python_quality_gate"]["inputSchema"]
         for key in (
