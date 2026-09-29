@@ -104,6 +104,8 @@ class IntakeReport(BaseModel):
     skipped_files: int = 0
     dependency_mode: DependencyMode = "none"
     dependencies: list[str] = Field(default_factory=list)
+    targets: list[str] = Field(default_factory=list)
+    config_identity: str | None = None
     files: list[FileEvidence] = Field(default_factory=list)
 
 
@@ -116,6 +118,7 @@ class QualityGateResponse(BaseModel):
         "ERROR",
     ]
     runtime_version: str
+    runtime_commit: str | None = None
     results: list[ToolResult]
     findings: list[Finding]
     intake: IntakeReport | None = None
@@ -146,6 +149,7 @@ class GateEvidence(BaseModel):
         "ERROR",
     ]
     runtime_version: str
+    runtime_commit: str | None = None
     finding_count: int
     results: list[ToolEvidence]
     intake: IntakeReport | None = None
