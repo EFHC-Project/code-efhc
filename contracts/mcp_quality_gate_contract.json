@@ -1,10 +1,27 @@
 {
-  "revision": "v1.1.3",
+  "revision": "v1.1.4",
   "required_tools": {
     "run_python_quality_gate_inline": {
       "required_properties": ["files", "targets"],
       "required_file_properties": ["path", "content"],
-      "optional_file_properties": ["mode"]
+      "optional_file_properties": ["mode"],
+      "required_result_fields": [
+        "runtime_version",
+        "results",
+        "findings",
+        "intake"
+      ],
+      "required_intake_fields": [
+        "targets",
+        "files",
+        "config_identity"
+      ],
+      "required_tool_result_fields": [
+        "status",
+        "exit_code",
+        "raw_exit_code",
+        "version"
+      ]
     },
     "compare_python_quality_gate": {
       "required_properties": [
@@ -15,7 +32,37 @@
       ],
       "required_file_properties": ["path", "content"],
       "optional_file_properties": ["mode"],
-      "optional_properties": ["include_findings"]
+      "optional_properties": ["include_findings"],
+      "required_result_fields": [
+        "status",
+        "summary",
+        "baseline",
+        "candidate",
+        "findings"
+      ]
+    },
+    "run_frontend_quality_gate_inline": {
+      "required_properties": ["files", "targets"],
+      "required_file_properties": ["path", "content"],
+      "optional_file_properties": ["mode"],
+      "optional_properties": ["tools"],
+      "required_result_fields": [
+        "runtime_version",
+        "results",
+        "findings",
+        "intake"
+      ],
+      "required_intake_fields": [
+        "targets",
+        "files",
+        "config_identity"
+      ],
+      "required_tool_result_fields": [
+        "status",
+        "exit_code",
+        "raw_exit_code",
+        "version"
+      ]
     }
   }
 }
