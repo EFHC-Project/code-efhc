@@ -43,14 +43,14 @@ class GateOptions(BaseModel):
 
 class CheckRequest(GateOptions):
     files: list[FileInput] = Field(min_length=1, max_length=200)
-    targets: list[str] = Field(default_factory=list, max_length=200)
+    targets: list[str] = Field(min_length=1, max_length=200)
 
 
 class CompareCheckRequest(GateOptions):
     baseline_files: list[FileInput] = Field(min_length=1, max_length=200)
     candidate_files: list[FileInput] = Field(min_length=1, max_length=200)
-    baseline_targets: list[str] = Field(default_factory=list, max_length=200)
-    candidate_targets: list[str] = Field(default_factory=list, max_length=200)
+    baseline_targets: list[str] = Field(min_length=1, max_length=200)
+    candidate_targets: list[str] = Field(min_length=1, max_length=200)
     include_findings: bool = False
 
 
@@ -86,6 +86,7 @@ class ToolResult(BaseModel):
         "ERROR",
     ]
     exit_code: int | None = None
+    raw_exit_code: int | None = None
     version: str | None = None
     findings: list[Finding] = Field(default_factory=list)
     suppressed_findings: int = 0
@@ -140,6 +141,7 @@ class ToolEvidence(BaseModel):
         "ERROR",
     ]
     exit_code: int | None = None
+    raw_exit_code: int | None = None
     version: str | None = None
     finding_count: int = 0
     suppressed_findings: int = 0
