@@ -455,7 +455,7 @@ def main() -> int:
     assert clean_frontend["status"] == "PASS", clean_frontend  # nosec B101
     assert statuses == {  # nosec B101
         "typescript": "PASS",
-        "eslint": "PASS",
+        "eslint": "NOT_APPLICABLE",
         "node-check": "NOT_APPLICABLE",
     }, statuses
     assert clean_frontend["intake"]["targets"] == [  # nosec B101
@@ -464,7 +464,48 @@ def main() -> int:
     cases.append(
         (
             "E2E-009",
-            "PASS frontend targets + TypeScript/ESLint smoke",
+            "PASS frontend TypeScript target smoke",
+        )
+    )
+
+    clean_javascript = tool_result(
+        call_tool(
+            "run_frontend_quality_gate_inline",
+            {
+                "files": [
+                    {
+                        "path": "src/value.mjs",
+                        "content": (
+                            "export const value = 1;\n"
+                        ),
+                    }
+                ],
+                "targets": ["src/value.mjs"],
+                "tools": [
+                    "typescript",
+                    "eslint",
+                    "node-check",
+                ],
+            },
+            9,
+        )
+    )
+    js_statuses = {
+        item["tool"]: item["status"]
+        for item in clean_javascript["results"]
+    }
+    assert clean_javascript["status"] == (  # nosec B101
+        "PASS"
+    ), clean_javascript
+    assert js_statuses == {  # nosec B101
+        "typescript": "NOT_APPLICABLE",
+        "eslint": "PASS",
+        "node-check": "PASS",
+    }, js_statuses
+    cases.append(
+        (
+            "E2E-010",
+            "PASS frontend JavaScript ESLint/Node smoke",
         )
     )
 
