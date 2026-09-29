@@ -23,10 +23,38 @@ OPENAI_FILE_SCHEMA = {
 }
 TOOLS_SCHEMA = {"type": "array", "items": {"type": "string", "enum": ["flake8", "ruff", "mypy", "bandit"]}, "minItems": 1, "maxItems": 4}
 DEPENDENCY_PROPERTIES = {
-    "dependency_mode": {"type": "string", "enum": ["none", "isolated"], "default": "none"},
-    "dependencies": {"type": "array", "items": {"type": "string"}, "maxItems": 10},
+    "dependency_mode": {
+        "type": "string",
+        "enum": ["none", "isolated"],
+        "default": "none",
+    },
+    "dependencies": {
+        "type": "array",
+        "items": {"type": "string"},
+        "maxItems": 10,
+    },
     "dependency_authorized": {"type": "boolean", "default": False},
 }
+
+GUARDIAN_INSTRUCTIONS = (
+    "CODE EFHC is a read-only Coding / Project Guardian verification layer. "
+    "ChatGPT performs authorized code changes; CODE EFHC independently "
+    "verifies Python code. Work from the current explicit OWNER task, "
+    "physical project HEAD, active SSOT/CANON/NORM, project profile, "
+    "locks/freezes and anti-regression rules. ChatGPT Memory is navigation "
+    "only, never authority. Before substantive work, establish project "
+    "identity, exact HEAD and allowed scope. Use run_python_quality_gate for "
+    "uploaded files/archives, run_python_quality_gate_from_github only with "
+    "an exact 40-character public GitHub commit SHA, and "
+    "run_python_quality_gate_inline for small inline code. Never weaken "
+    "checks to obtain PASS. Never run auto-fix. Never enable isolated "
+    "dependencies without explicit user authorization for exact "
+    "name==version pins. For closure/reporting, distinguish VERIFIED, "
+    "CHANGED, TESTS/CI, BLOCKERS and NEXT STEP. Local checks are not remote "
+    "CI; never claim CI GREEN, persistence, release integrity or closure "
+    "without direct evidence. Preserve immutable history and never "
+    "auto-start the next cycle."
+)
 
 
 def _tool_descriptors():
@@ -154,20 +182,7 @@ async def mcp(request: Request):
             "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "code-efhc", "version": "0.2.2"},
-            "instructions": (
-                "CODE EFHC is a read-only Coding / Project Guardian verification layer. "
-                "ChatGPT performs authorized code changes; CODE EFHC independently verifies Python code. "
-                "Work from the current explicit OWNER task, physical project HEAD, active SSOT/CANON/NORM, "
-                "project profile, locks/freezes and anti-regression rules. ChatGPT Memory is navigation only, "
-                "never authority. Before substantive work, establish project identity, exact HEAD and allowed scope. "
-                "Use run_python_quality_gate for uploaded files/archives, run_python_quality_gate_from_github only "
-                "with an exact 40-character public GitHub commit SHA, and run_python_quality_gate_inline for small "
-                "inline code. Never weaken checks to obtain PASS. Never run auto-fix. Never enable isolated "
-                "dependencies without explicit user authorization for exact name==version pins. "
-                "For closure/reporting, distinguish VERIFIED, CHANGED, TESTS/CI, BLOCKERS and NEXT STEP. "
-                "Local checks are not remote CI; never claim CI GREEN, persistence, release integrity or closure "
-                "without direct evidence. Preserve immutable history and never auto-start the next cycle."
-            ),
+            "instructions": GUARDIAN_INSTRUCTIONS,
         }
         return {"jsonrpc": "2.0", "id": rid, "result": result}
     if method == "tools/list":
